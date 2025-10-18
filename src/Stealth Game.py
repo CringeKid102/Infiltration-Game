@@ -192,6 +192,15 @@ class StealthGame:
 
         # UI animation timer used for pulsing effects
         self.ui_time = 0.0
+
+        # Particle system and floating text for detection changes
+        self.particles = [] # List of dicts: {x, y, vx, vy, life, size, oclor, type}
+        self.float_texts = [] # List of dicts: {text, x, y, vy, time, color, alpha}
+
+        # Screen shake
+        self.shake_amount = 0.0
+        self.shake_time = 0.0
+        self.shake_duration = 0.0
     
     def load_guard_animations(self):
         base = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets", "sprites"))
@@ -239,6 +248,10 @@ class StealthGame:
             guard.animation_set = self.guard_animation_sets.get('default_guard', {})
             if 'idle' in guard.animation_set:
                 guard.current_anim_name = 'idle'
+        
+        # Initialize guard random phases so they don't all sync
+        for guard in self.guards:
+            guard.current_time = random.uniform(0, guard.patrol_time)
     
     def init_background(self):
         self.bg_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets", "videos", "hacking bg.mp4"))
@@ -303,6 +316,11 @@ class StealthGame:
             guard.alert = False
             guard.current_time = random.uniform(0, guard.patrol_time)
         self.create_buttons()
+        self.particles.clear()
+        self.float_texts.clear()
+        self.shake_amount = 0.0
+        self.shake_time = 0.0
+        self.shake_duration = 0.0
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -314,14 +332,15 @@ class StealthGame:
 
                 if self.state == "menu":
                     if self.buttons['menu'].is_clicked(pos):
-                        self.state = "playing"
                         self.reset_game()
+                        self.state = "playing"
                     
                 elif self.state == "playing":
                     self.handle_game_clicks(pos)
                 
                 elif self.state in ["success", "failure"]:
                     if self.buttons['menu'].is_clicked(pos):
+                        self.reset_game()
                         self.state = "menu"
         
     def handle_game_clicks(self, pos):
@@ -330,20 +349,33 @@ class StealthGame:
             self.camera_disabled = True
             self.camera_disable_time = 8
             self.buttons['camera'].cooldown = 7
-            self.detection_level = max(0, self.detection_level - 15)
+            delta = -15
+            self.detection_level = max(0, self.detection_level + delta)
+            # smoke effect at button and floating text
+            bx, by = self.buttons['camera'].rect.center
+            self.spawn_smoke(bx, by, count=12)
+            self.add_detection_popup(delta, bx, by)
 
         elif self.buttons['lights'].is_clicked(pos):
             self.buttons['lights'].press()
             self.lights_disabled = True
             self.lights_disable_time = 6
             self.buttons['lights'].cooldown = 5
-            self.detection_level = max(0, self.detection_level - 10)
+            delta = -10
+            self.detection_level = max(0, self.detection_level + delta)
+            lx, ly = self.buttons['lights'].rect.center
+            self.spawn_smoke(lx, ly, count=8)
+            self.add_detection_popup(delta, lx, ly)
         
         elif self.buttons['distract'].is_clicked(pos):
             self.buttons['distract'].press()
             for guard in self.guards:
                 guard.alert = False
-            self.detection_level = max(0, self.detection_level - 20)
+            delta = -20
+            self.detection_level = max(0, self.detection_level + delta)
+            dx, dy = self.buttons['distract'].rect.center
+            self.spawn_smoke(dx, dy, count=14)
+            self.add_detection_popup(delta, dx, dy)
             self.buttons['distract'].cooldown = 10
         
         elif self.buttons['hack'].is_clicked(pos):
@@ -351,14 +383,25 @@ class StealthGame:
             success_chance = max(0.15, 1.0 - (self.detection_level / 80.0))
             if random.random() < success_chance:
                 self.objective_progress += 1
-                self.detection_level = max(0, self.detection_level - 5)
+                delta = -5
+                self.detection_level = max(0, self.detection_level + delta)
                 self.buttons['hack'].cooldown = 2.0
                 self.feedback_messages.append({'text': "HACK SUCCESSFUL", 'color': GREEN, 'time': 2.5})
+                hx, hy = WIDTH//2, 220
+                self.spawn_sparks(hx, hy, count=18, color=(255,220,120))
+                self.add_detection_popup(delta, hx, hy)
+                self.shake_amount = max(self.shake_amount, 3.0)
+                self.shake_time = self.shake_duration = 0.25
             else:
                 penalty = min(20, int(8 + self.detection_level * 0.05))
                 self.detection_level += penalty
                 self.buttons['hack'].cooldown = 3.5
                 self.feedback_messages.append({'text': "HACK FAILED", 'color': RED, 'time': 2.5})
+                hx, hy = WIDTH//2, 220
+                self.spawn_sparks(hx, hy, count=26, color=(255,80,60))
+                self.add_detection_popup(+penalty, hx, hy)
+                self.shake_amount = max(self.shake_amount, 8.0)
+                self.shake_time = self.shake_duration = 0.4
 
     def update(self, dt):
         if self.state != "playing":
@@ -402,7 +445,13 @@ class StealthGame:
                 
                 if random.random() < detection_chance:
                     guard.alert = True
-                    self.detection_level += 5
+                    delta = 5
+                    self.detection_level += delta
+                    # pop up near guard position
+                    gx = 100 + int(guard.position * 800)
+                    gy = 150 + (self.guards.index(guard) * 60) + 20
+                    self.spawn_sparks(gx, gy, count=6, color=(255,180,80))
+                    self.add_detection_popup(+delta, gx, gy)
         
         self.event_timer += dt
         if self.event_timer >= self.event_interval:
@@ -417,6 +466,33 @@ class StealthGame:
             if self.current_event['time_left'] <= 0:
                 self.current_event = None
         
+        # update particles
+        for p in list(self.particles):
+            p['x'] += p['vx'] * dt
+            p['y'] += p['vy'] * dt
+            p['vy'] += p.get('gravity', 0) * dt
+            p['life'] -= dt
+            if p['life'] <= 0:
+                self.particles.remove(p)
+        
+        # update floating texts
+        for ft in list(self.float_texts):
+            ft['y'] += ft['vy'] * dt
+            ft['time'] -= dt
+            ft['alpha'] = max(0, int(255 * (ft['time'] / max(0.01, ft.get('duration', 1.0)))))
+            if ft['time'] <= 0:
+                self.float_texts.remove(ft)
+        
+        # decay screen shake
+        if self.shake_time > 0:
+            self.shake_time -= dt
+            if self.shake_time <= 0:
+                self.shake_amount = 0.0
+                self.shake_time = 0.0
+                self.shake_duration = 0.0
+        else:
+            self.shake_amount = max(0.0, self.shake_amount - 8.0 * dt)
+        
         for m in list(self.feedback_messages):
             m['time'] -= dt
             if m['time'] <= 0:
@@ -425,8 +501,12 @@ class StealthGame:
         self.detection_level = max(0, min(self.detection_level, self.max_detection))
         if self.objective_progress >= self.objectives_needed:
             self.state = "success"
+            self.particles.clear()
+            self.float_texts.clear()
         elif self.detection_level >= self.max_detection or self.time_remaining <= 0:
             self.state = "failure"
+            self.particles.clear()
+            self.float_texts.clear()
         
     def trigger_random_event(self):
         events = [
@@ -436,16 +516,32 @@ class StealthGame:
             {'text': "Patrol route adjusted", 'duration': 10.0, 'instant': 0, 'dps': 0.3},
             ]
         ev = random.choice(events)
-        self.detection_level += ev.get('insant', 0)
+        inst = ev.get('instant', 0)
+        if inst:
+            ex, ey = WIDTH//2, 200
+            self.spawn_sparks(ex, ey, count=18, color=(255,200,140))
+            self.add_detection_popup(+inst, ex, ey)
+        self.detection_level += inst
         ev['time_left'] = ev['duration']
         self.current_event = ev
+        # screen shake for big events
+        if inst >= 10:
+            self.shake_amount = max(self.shake_amount, 9.0)
+            self.shake_time = self.shake_duration = 0.5
     
     def draw(self):
+        # render everything to a temp canva so we can blit screen shake offset
+        canvas = pygame.Surface((WIDTH, HEIGHT)).convert_alpha()
+        canvas.fill((0,0,0))
+        old_screen = self.screen
+        self.screen = canvas
         if self.bg_frame_surf:
             bg = pygame.transform.scale(self.bg_frame_surf, (WIDTH, HEIGHT))
             self.screen.blit(bg, (0, 0))
         else:
             self.screen.fill(BLACK)
+
+        self.draw_particles(self.screen)
 
         if self.state == "menu":
             self.draw_menu()
@@ -456,6 +552,20 @@ class StealthGame:
         elif self.state == "failure":
             self.draw_end_screen("MISSION FAILED", RED)
         
+        self.draw_float_texts(self.screen)
+
+        # Shake offset
+        ox, oy = 0, 0
+        if self.shake_amount > 0:
+            frac = (self.shake_time / max(0.0001, self.shake_duration)) if self.shake_duration > 0 else 0
+            cur_amp = self.shake_amount * (frac if frac > 0 else 1.0)
+            ox = int(random.uniform(-cur_amp, cur_amp))
+            oy = int(random.uniform(-cur_amp, cur_amp))
+        
+        # restore screen and blit canvas with offset
+        self.screen = old_screen
+        self.screen.fill(BLACK)
+        self.screen.blit(canvas, (ox, oy))
         pygame.display.flip()
     
     def draw_menu(self):
@@ -558,6 +668,79 @@ class StealthGame:
 
         value_text = self.small_font.render(f"{int(value)}/{max_value}", True, WHITE)
         self.screen.blit(value_text, (x + width//2 - value_text.get_width()//2, y + height//2 - value_text.get_height()//2))
+
+    def spawn_sparks(self, x, y, count=12, color=(255,200,100)):
+        for i in range(count):
+            ang = random.uniform(0, math.pi*2)
+            spd = random.uniform(40, 220)
+            life = random.uniform(0.35, 0.9)
+            self.particles.append({
+                'x': x + random.uniform(-8, 8),
+                'y': y + random.uniform(-8, 8),
+                'vx': math.cos(ang) * spd,
+                'vy': math.sin(ang) * spd * 0.6 - random.uniform(10, 60),
+                'life': life,
+                'inital_life': life,
+                'size': random.uniform(2, 4),
+                'color': color,
+                'gravity': 300,
+                'type': 'spark'
+            })
+
+    def spawn_smoke(self, x, y, count=10):
+        for i in range(count):
+            life = random.uniform(0.9, 2.0)
+            self.particles.append({
+                'x': x + random.uniform(-12, 12),
+                'y': y + random.uniform(-6, 6),
+                'vx': random.uniform(-20, 20),
+                'vy': random.uniform(-40, 10),
+                'life': life,
+                'inital_life': life,
+                'size': random.uniform(8, 18),
+                'color': (180, 180, 180),
+                'gravity': -20,
+                'type': 'smoke'
+            })
+    
+    def add_detection_popup(self, delta, x=None, y=None):
+        if x is None or y is None:
+            x, y = WIDTH//2, 200
+        txt = f"{'+' if delta>0 else ''}{int(delta)}"
+        col = RED if delta > 0 else GREEN
+        self.float_texts.append({
+            'text': txt,
+            'x': x + random.uniform(-12, 12),
+            'y': y + random.uniform(-6, 6),
+            'vy': -40 - random.uniform(0, 40),
+            'time': 1.0,
+            'duration': 1.0,
+            'color': col,
+            'alpha': 255,
+        })
+    
+    def draw_particles(self, surface):
+        for p in self.particles:
+            life_frac = max(0.0, min(1.0, p['life'] / max(0.001, p.get('initial_life', p['life']))))
+            alpha = int(255 * life_frac)
+            if p['type'] == 'spark':
+                r = max(1, int(p['size']))
+                s = pygame.Surface((r*2, r*2), pygame.SRCALPHA)
+                col = p['color'] + (alpha,)
+                pygame.draw.circle(s, col, (r, r), r)
+                surface.blit(s, (int(p['x'])-r, int(p['y'])-r))
+            else:
+                r = max(1, int(p['size']))
+                s = pygame.Surface((r*2, r*2), pygame.SRCALPHA)
+                sc = p['color'] + (max(20, int(150 * life_frac)),)
+                pygame.draw.circle(s, sc, (r, r), r)
+                surface.blit(s, (int(p['x'])-r, int(p['y'])-r))
+    
+    def draw_float_texts(self, surface):
+        for ft in self.float_texts:
+            txt_surf = self.font.render(ft['text'], True, ft['color'])
+            txt_surf.set_alpha(ft.get('alpha', 255))
+            surface.blit(txt_surf, (int(ft['x']), int(ft['y'])))
 
     def draw_end_screen(self, message, color):
         text = self.title_font.render(message, True, color)
