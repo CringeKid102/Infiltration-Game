@@ -104,25 +104,45 @@ class StealthGame:
                 continue
 
             anims = {}
-            for name, params in info['animations'].items():
-                try:
+            try:
+                for name, params in info['animations'].items():
                     anim_master.add_animation(
                         name,
                         row=params['row'],
                         start_col=params.get('start_col', 0),
                         num_frames=params['num_frames'],
                         speed=params.get('speed', 0.1),
-                        loop=params.get('loop', True)
+                        loop=params.get('loop', True),
+                        pingpong=params.get('pingpong', False)
                     )
-                    anims[name] = anim_master
-                except Exception as e:
-                    print(f"load_guard_animations: failed to add animation {name}: {e}")
+                    # Store the raw animation data from the master
+                    anims[name] = {
+                        'frames': anim_master.animations[name]['frames'],
+                        'druations': anim_master.animations[name]['durations'],
+                        'loop': anim_master.animations[name]['loop'],
+                        'pingpong': anim_master.animations[name].get('pingpong', False)
+                    }
+            except Exception as e:
+                print(f"load_guard_animations: failed to add animation {name}: {e}")
+            # store frame data per sheet key
             self.guard_animation_sets[key] = anims
         
-        for guard in self.guards:
-            guard.animation_set = self.guard_animation_sets.get('default_guard', {})
-            if 'idle' in guard.animation_set:
-                guard.current_anim_name = 'idle'
+        # assign per guard animation instances
+        default_cfg = self.guard_animation_sets.get('default_guard', None)
+        if default_cfg:
+            for guard in self.guards:
+                guard_set = {}
+                for name, data in default_cfg['anims'].items():
+                    try:
+                        # create a new animation instance per guard
+                        anim_inst = Animation(default_cfg['sheet'], default_cfg['frame_w'], default_cfg['frame_h'], scale=default_cfg['scale'])
+                        anim_inst.add_animation(name, frames=data['frames'], durations=data['durations'], loop=data.get('loop', True), pingpong=data.get('pingpong', False))
+                        guard_set[name] = anim_inst
+                    except Exception as e:
+                        print(f"load_guard_animations: failed to instantiate animation '{name}' for guard: {e}")
+                guard.animation_set = guard_set
+                if 'idle' in guard.animation_set:
+                    guard.current_anim_name = 'idle'
         
         # Initialize guard random phases so they don't all sync
         for guard in self.guards:
@@ -192,9 +212,6 @@ class StealthGame:
             guard.current_time = random.uniform(0, guard.patrol_time)
         self.create_buttons()
         self.particle_sys.clear()
-        self.shake_amount = 0.0
-        self.shake_time = 0.0
-        self.shake_duration = 0.0
 
     def handle_events(self):
         for event in pygame.event.get():
@@ -372,8 +389,7 @@ class StealthGame:
         self.current_event = ev
         # screen shake for big events
         if inst >= 10:
-            self.shake_amount = max(self.shake_amount, 9.0)
-            self.shake_time = self.shake_duration = 0.5
+            self.particle_sys.start_shake(9.0, 0.5)
     
     def draw(self):
         # render everything to a temp canva so we can blit screen shake offset

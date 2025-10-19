@@ -13,7 +13,10 @@ class ParticleSystem:
         self.shake_duration = 0.0
 
     def spawn_sparks(self, x: float, y: float, count: int = 12, color: Tuple[int,int,int]=(255,200,100)):
-        for _ in range(count):
+        MAX = 500
+        available = max(0, MAX - len(self.particles))
+        to_spawn = min(count, available)
+        for _ in range(to_spawn):
             ang = random.uniform(0, math.pi*2)
             spd = random.uniform(40, 220)
             life = random.uniform(0.35, 0.9)
@@ -31,7 +34,10 @@ class ParticleSystem:
             })
 
     def spawn_smoke(self, x: float, y: float, count: int = 10):
-        for _ in range(count):
+        MAX = 500
+        available = max(0, MAX - len(self.particles))
+        to_spawn = min(count, available)
+        for _ in range(to_spawn):
             life = random.uniform(0.9, 2.0)
             self.particles.append({
                 'x': x + random.uniform(-12, 12),
