@@ -9,6 +9,8 @@ class Guard:
         self.current_time = 0.0
         self.position = 0.0
         self.alert = False
+        self.alert_time = 0.0
+        self.alert_flash = False
 
         self.animation_set = animation_set or {}
         self.current_anim_name = default_anim if default_anim in self.animation_set else None
@@ -19,6 +21,10 @@ class Guard:
         self.current_time += dt
         self.position = (self.current_time % self.patrol_time) / self.patrol_time
 
+        if self.alert:
+            self.alert_time += dt
+            self.alert_flash = (int(self.alert_time / 0.3) % 2) == 0
+
         anim = self.animation_set.get(self.current_anim_name) if self.current_anim_name else None
         if anim:
             if self.alert and "alert" in self.animation_set and self.current_anim_name != "alert":
@@ -26,12 +32,15 @@ class Guard:
                 self.current_anim_name = "alert"
             elif not self.alert and self.current_anim_name == "alert" and "idle" in self.animation_set:
                 self.current_anim_name = "idle"
+                self.alert_time = 0.0
                 anim = self.animation_set["idle"]
             anim.update(dt)
 
     def draw(self, screen: pygame.Surface, x: int, y: int, width: int, height: int):
         route_rect = pygame.Rect(x, y, width, height)
-        pygame.draw.rect(screen, (50,50,50), route_rect)
+
+        bg_color = (50, 50, 50) if self.alert and self.alert_flash else (100, 50, 50)
+        pygame.draw.rect(screen, bg_color, route_rect)
         pygame.draw.rect(screen, (255,255,255), route_rect, 1)
 
         guard_x = x + int(self.position * width)
@@ -41,6 +50,11 @@ class Guard:
         else:
             guard_color = (255,0,0) if self.alert else (0,0,255)
             pygame.draw.circle(screen, guard_color, (guard_x, y + height//2), 8)
+
+        if self.alert and self.alert_flash:
+            font = pygame.font.Font(None, 28)
+            exclaim = font.render("!", True, (255,255,0))
+            screen.blit(exclaim, (guard_x - exclaim.get_width()//2, y - 25))   
 
         font = pygame.font.Font(None, 20)
         label = font.render(f"Guard {self.id}", True, (255,255,255))

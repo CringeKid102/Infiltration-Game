@@ -42,6 +42,10 @@ class StealthGame:
 
         self.state = "menu"
 
+        self.transition_alpha = 0
+        self.transition_speed = 500
+        self.transitioning_to = None
+
         self._load_icons()
         self.mission_time = 60
         self.time_remaining = self.mission_time
@@ -49,6 +53,15 @@ class StealthGame:
         self.max_detection = 100
         self.objective_progress = 0
         self.objectives_needed = 5
+
+        self.animated_time = self.mission_time
+        self.animated_detection = 0.0
+        self.animated_objectives = 0.0
+        self.anim_speed = 4.0
+
+        # Camera blink animation
+        self.camera_blink_time = 0.0
+        self.camera_blink_active = False
 
         self.guards = [
             Guard(1, 8),
@@ -267,16 +280,22 @@ class StealthGame:
 
     def reset_game(self):
         self.time_remaining = self.mission_time
+        self.animated_time = self.mission_time
         self.detection_level = 0
+        self.animated_detection = 0.0
         self.objective_progress = 0
+        self.animated_objectives = 0.0
         self.camera_disabled = False
         self.camera_disable_time = 0
+        self.camera_blink_time = 0.0
+        self.camera_blink_active = False
         self.lights_disabled = False
         self.lights_disable_time = 0
         self.event_timer = 0
         self.current_event = None
         for guard in self.guards:
             guard.alert = False
+            guard.alert_time = 0.0
             guard.current_time = random.uniform(0, guard.patrol_time)
         self.create_buttons()
         self.particle_sys.clear()
@@ -297,7 +316,7 @@ class StealthGame:
                 if self.state == "menu":
                     if self.buttons['menu'].is_clicked(pos):
                         self.reset_game()
-                        self.state = "playing"
+                        self.start_transition("playing")
                     
                 elif self.state == "playing":
                     self._handle_game_clicks(pos)
@@ -305,8 +324,12 @@ class StealthGame:
                 elif self.state in ["success", "failure"]:
                     if self.buttons['menu'].is_clicked(pos):
                         self.reset_game()
-                        self.state = "menu"
-    
+                        self.start_transition("menu")
+
+    def start_transition(self, target_state: str):
+        self.transitioning_to = target_state
+        self.transition_alpha = 0
+
     def _handle_keyboard(self, key):
         """
         Handle keyboard shortcuts for buttons.
@@ -346,6 +369,8 @@ class StealthGame:
             self.camera_disable_time = 8
             self.buttons['camera'].set_cooldown(7)
             self.add_toast("Cameras Disabled", BLUE, 2.0)
+            self.camera_blink_time = 0.5
+            self.camera_blink_active = True
             delta = -15
             self.detection_level = max(0, self.detection_level + delta)
             # smoke effect at button and floating text
@@ -403,6 +428,15 @@ class StealthGame:
                 self.particle_sys.start_shake(8.0, 0.4)
 
     def update(self, dt):
+        if self.transitioning_to:
+            self.transition_alpha += self.transition_speed * dt
+            if self.transition_alpha >= 255:
+                self.transition_alpha = 255
+                self.state = self.transitioning_to
+                self.transitioning_to = None
+                self.transition_alpha = 0
+            return
+        
         if self.state != "playing":
             return
 
@@ -410,13 +444,26 @@ class StealthGame:
         # advance UI timer for pulsing effects
         self.ui_time += dt
 
+        lerp = lambda a, b, t: a + (b - a) * min(1.0, t)
+        self.animated_time = lerp(self.animated_time, self.time_remaining, dt * self.anim_speed)
+        self.animated_detection = lerp(self.animated_detection, self.detection_level, dt * self.anim_speed)
+        self.animated_objectives = lerp(self.animated_objectives, self.objective_progress, dt * self.anim_speed)
+
+        # Camera blink animation
+        if self.camera_blink_time > 0:
+            self.camera_blink_time -= dt
+            if self.camera_blink_time <= 0:
+                self.camera_blink_active = False
+
         for button in self.buttons.values():
             button.update(dt)
         
         if self.camera_disable_time > 0:
             self.camera_disable_time -= dt
-        else:
-            self.camera_disabled = False
+            if self.camera_disable_time <= 0:
+                self.camera_disabled = False
+                self.camera_blink_time = 0.3
+                self.camera_blink_active = True
         
         if self.lights_disable_time > 0:
             self.lights_disable_time -= dt
@@ -537,6 +584,13 @@ class StealthGame:
         
         self.particle_sys.draw_float_texts(self.screen, self.font)
 
+        # Draw transition fade
+        if self.transition_alpha > 0:
+            fade_surf = pygame.Surface((WIDTH, HEIGHT))
+            fade_surf.fill(BLACK)
+            fade_surf.set_alpha(int(self.transition_alpha))
+            self.screen.blit(fade_surf, (0, 0))
+
         # restore screen and blit canvas with offset
         self.screen = old_screen
         self.screen.fill(BLACK)
@@ -568,8 +622,8 @@ class StealthGame:
         title = self.title_font.render("SECURITY TERMINAL", True, GREEN)
         self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 20))
 
-        self.draw_status_bars(25, 90, 300, 30, "TIME", self.time_remaining, self.mission_time, BLUE, self.icons['clock'])
-        self.draw_status_bars(WIDTH - 325, 90, 300, 30, "DETECTION", self.detection_level, self.max_detection, RED, self.icons['radar'])
+        self.draw_status_bars(25, 90, 300, 30, "TIME", self.animated_time, self.mission_time, BLUE, self.icons['clock'])
+        self.draw_status_bars(WIDTH - 325, 90, 300, 30, "DETECTION", self.animated_detection, self.max_detection, RED, self.icons['radar'])
         self.draw_mission_progress(WIDTH//2 - 150, 90, 300, 30)
 
         for i, msg in enumerate(self.feedback_messages):
@@ -583,11 +637,18 @@ class StealthGame:
 
         status_y = 350
         systems = [
-            ("CAMERAS", "OFFLINE" if self.camera_disabled else "ONLINE", GREEN if self.camera_disabled else RED),
+            ("CAMERAS", "OFFLINE" if self.camera_disabled else "ONLINE", 
+             GREEN if self.camera_disabled else RED, self.camera_blink_active),
             ("LIGHTS", "OFFLINE" if self.lights_disabled else "ONLINE", GREEN if self.lights_disabled else RED)
         ]
 
-        for i, (name, status, color) in enumerate(systems):
+        for i, sys_data in enumerate(systems):
+            name = sys_data[0]
+            status = sys_data[1]
+            color = sys_data[2]
+            blink = sys_data[3] if len(sys_data) > 3 else False
+            if blink and int(self.ui_time *  10) % 2 == 0:
+                color = YELLOW
             text = self.small_font.render(f"{name}: {status}", True, color)
             self.screen.blit(text, (100 + i * 250, status_y))
 
@@ -663,7 +724,7 @@ class StealthGame:
         self.screen.blit(label, (x, y - 25))
 
         # Progress
-        progress = self.objective_progress / self.objectives_needed
+        progress = self.animated_objectives / self.objectives_needed
 
         # Background
         bg_color = DARK_GRAY if not self.high_contrast else BLACK
