@@ -8,6 +8,7 @@ from animation import Animation
 from button import Button
 from guard import Guard
 from particles import ParticleSystem
+from typing import Tuple
 
 # Initialize Pygame
 pygame.init()
@@ -35,11 +36,13 @@ class StealthGame:
         self.clock = pygame.time.Clock()
         self.running = True
 
-        self.title_font = pygame.font.Font(None, 48)
-        self.font = pygame.font.Font(None, 28)
-        self.small_font = pygame.font.Font(None, 22)
+        self.font_scale = 1.0
+        self.high_contrast = False
+        self._init_fonts()
 
         self.state = "menu"
+
+        self._load_icons()
         self.mission_time = 60
         self.time_remaining = self.mission_time
         self.detection_level = 0
@@ -76,6 +79,45 @@ class StealthGame:
 
         # particle system
         self.particle_sys = ParticleSystem()
+
+        # Toast notification system
+        self.toasts = []
+    
+    def _init_fonts(self):
+        """
+        Initialize fonts based on current scale and contrast settings.
+        """
+        base_title = int(48 * self.font_scale)
+        base_normal = int(28 * self.font_scale)
+        base_small = int(22 * self.font_scale)
+
+        self.title_font = pygame.font.Font(None, base_title)
+        self.font = pygame.font.Font(None, base_normal)
+        self.small_font = pygame.font.Font(None, base_small)
+ 
+    def create_icon(self, color, symbol):
+        icon_size =  24
+        surf = pygame.Surface((icon_size, icon_size), pygame.SRCALPHA)
+        pygame.draw.circle(surf, color, (icon_size//2, icon_size//2), icon_size//2-2)
+        font = pygame.font.Font(None, 20)
+        text = font.render(symbol, True, WHITE)
+        surf.blit(text, text.get_rect(center=(icon_size//2, icon_size//2)))
+        return surf
+
+    def _load_icons(self):
+        """
+        Load button icons.
+        """
+
+        self.icons = {
+            'clock': self.create_icon((100, 150, 255), 'T'),
+            'radar': self.create_icon((255, 100, 100), 'D'),
+            'target': self.create_icon((100, 255, 100), 'O'),
+            'camera': self.create_icon((100, 100, 200), 'C'),
+            'light': self.create_icon((200, 200, 100), 'L'),
+            'distract': self.create_icon((200, 100, 200), 'D'),
+            'hack': self.create_icon((100, 200, 100), 'H'),
+        }
     
     def load_guard_animations(self):
         base = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets", "sprites"))
@@ -190,12 +232,32 @@ class StealthGame:
         start_x = 100
 
         self.buttons = {
-            'camera': Button(start_x, button_y, button_width, button_height, "Disable Cams", DARK_BLUE, BLUE),
-            'lights': Button(start_x + spacing, button_y, button_width, button_height, "Cut Lights", DARK_BLUE, BLUE),
-            'distract': Button(start_x + 2 * spacing, button_y, button_width, button_height, "Distraction", DARK_BLUE, BLUE),
-            'hack': Button(start_x + 3 * spacing, button_y, button_width, button_height, "Hack System", DARK_GREEN, GREEN),
+            'camera': Button(start_x, button_y, button_width, button_height, "Disable Cams", DARK_BLUE, BLUE,
+                             tooltip="Disable security cameras\nReduces detection by 15%\nCooldown: 7s",
+                             icon=self.icons['camera'], hotkey="1"),
+            'lights': Button(start_x + spacing, button_y, button_width, button_height, "Cut Lights", DARK_BLUE, BLUE,
+                             tooltip="Cut the lights in the area\nReduces detection by 10%\nCooldown: 6s",
+                             icon=self.icons['light'], hotkey="2"),
+            'distract': Button(start_x + 2 * spacing, button_y, button_width, button_height, "Distraction", DARK_BLUE, BLUE,
+                             tooltip="Create a distraction to lure guards away\nReduces detection by 20%\nCooldown: 8s",
+                             icon=self.icons['distract'], hotkey="3"),
+            'hack': Button(start_x + 3 * spacing, button_y, button_width, button_height, "Hack System", DARK_GREEN, GREEN,
+                           tooltip="Hack into the security system\nReduces detection by 25%\nCooldown: 10s",
+                           icon=self.icons['hack'], hotkey="4"),
             'menu': Button(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50, "START MISSION", DARK_GREEN, GREEN)
         }
+
+    def add_toast(self, text: str, color: Tuple[int,int,int], duration: float = 2.0):
+        """
+        Add a toast notification.
+        """
+        self.toasts.append({
+            'text': text,
+            'color': color,
+            'time': duration,
+            'duration': duration,
+            'y_offset': 0,
+        })
 
     def reset_game(self):
         self.time_remaining = self.mission_time
@@ -218,6 +280,9 @@ class StealthGame:
             if event.type == pygame.QUIT:
                 self.running = False
             
+            if event.type == pygame.KEYDOWN:
+                self._handle_keyboard(event.key)
+
             if event.type == pygame.MOUSEBUTTONDOWN:
                 pos = pygame.mouse.get_pos()
 
@@ -227,19 +292,52 @@ class StealthGame:
                         self.state = "playing"
                     
                 elif self.state == "playing":
-                    self.handle_game_clicks(pos)
+                    self._handle_game_clicks(pos)
                 
                 elif self.state in ["success", "failure"]:
                     if self.buttons['menu'].is_clicked(pos):
                         self.reset_game()
                         self.state = "menu"
+    
+    def _handle_keyboard(self, key):
+        """
+        Handle keyboard shortcuts for buttons.
+        """
+        if self.state != "playing":
+            action_map = {
+                pygame.K_1: 'camera',
+                pygame.K_2: 'lights',
+                pygame.K_3: 'distract',
+                pygame.K_4: 'hack',
+            }
+
+            button_key = action_map.get(key)
+            if button_key and self.buttons[button_key].active:
+                self._handle_game_clicks(self.buttons[button_key].rect.center)
         
-    def handle_game_clicks(self, pos):
+        elif self.state == 'menu' and key == pygame.K_RETURN:
+            self.reset_game()
+            self.state = "playing"
+
+        if key == pygame.K_F1:
+            self.font_scale = min(1.5, self.font_scale + 0.1)
+            self._init_fonts()
+            self.add_toast(f"Font Scale: {self.font_scale*100}%", YELLOW)
+        elif key == pygame.K_F2:
+            self.font_scale = max(0.8, self.font_scale - 0.1)
+            self._init_fonts()
+            self.add_toast(f"Font Scale: {self.font_scale*100}%", YELLOW)
+        elif key == pygame.K_F3:
+            self.high_contrast = not self.high_contrast
+            self.add_toast(f"High Contrast {'Enabled' if self.high_contrast else 'Disabled'}", YELLOW)
+
+    def _handle_game_clicks(self, pos):
         if self.buttons['camera'].is_clicked(pos):
             self.buttons['camera'].press()
             self.camera_disabled = True
             self.camera_disable_time = 8
-            self.buttons['camera'].cooldown = 7
+            self.buttons['camera'].set_cooldown(7)
+            self.add_toast("Cameras Disabled", BLUE, 2.0)
             delta = -15
             self.detection_level = max(0, self.detection_level + delta)
             # smoke effect at button and floating text
@@ -251,7 +349,8 @@ class StealthGame:
             self.buttons['lights'].press()
             self.lights_disabled = True
             self.lights_disable_time = 6
-            self.buttons['lights'].cooldown = 5
+            self.buttons['lights'].set_cooldown(5)
+            self.add_toast("Lights Cut", BLUE, 2.0)
             delta = -10
             self.detection_level = max(0, self.detection_level + delta)
             lx, ly = self.buttons['lights'].rect.center
@@ -267,7 +366,8 @@ class StealthGame:
             dx, dy = self.buttons['distract'].rect.center
             self.particle_sys.spawn_smoke(dx, dy, count=14)
             self.particle_sys.add_detection_popup(delta, dx, dy)
-            self.buttons['distract'].cooldown = 10
+            self.buttons['distract'].set_cooldown(10)
+            self.add_toast("Distraction Created", BLUE, 2.0)
         
         elif self.buttons['hack'].is_clicked(pos):
             self.buttons['hack'].press()
@@ -276,7 +376,8 @@ class StealthGame:
                 self.objective_progress += 1
                 delta = -5
                 self.detection_level = max(0, self.detection_level + delta)
-                self.buttons['hack'].cooldown = 2.0
+                self.buttons['hack'].set_cooldown(2.0)
+                self.add_toast(f"HACK SUCCESSFUL! ({self.objective_progress}/{self.objectives_needed})", GREEN, 2.5)
                 self.feedback_messages.append({'text': "HACK SUCCESSFUL", 'color': GREEN, 'time': 2.5})
                 hx, hy = WIDTH//2, 220
                 self.particle_sys.spawn_sparks(hx, hy, count=18, color=(255,220,120))
@@ -285,7 +386,8 @@ class StealthGame:
             else:
                 penalty = min(20, int(8 + self.detection_level * 0.05))
                 self.detection_level += penalty
-                self.buttons['hack'].cooldown = 3.5
+                self.buttons['hack'].set_cooldown(3.5)
+                self.add_toast(f"HACK FAILED! +{penalty}% detection", RED, 2.5)
                 self.feedback_messages.append({'text': "HACK FAILED", 'color': RED, 'time': 2.5})
                 hx, hy = WIDTH//2, 220
                 self.particle_sys.spawn_sparks(hx, hy, count=26, color=(255,80,60))
@@ -371,6 +473,14 @@ class StealthGame:
             self.state = "failure"
             self.particle_sys.clear()
         
+        for toast in list(self.toasts):
+            toast['time'] -= dt
+            if toast['time'] <= 0:
+                self.toasts.remove(toast)
+            else:
+                alpha_ratio = toast['time'] / toast['duration']
+                toast['y_offset'] = 255 * min(1.0, alpha_ratio * 2.0)
+        
     def trigger_random_event(self):
         events = [
             {'text': "Security sweep initiated", 'duration': 6.0, 'instant': random.randint(5, 12), 'dps': 1.0},
@@ -450,11 +560,10 @@ class StealthGame:
         title = self.title_font.render("SECURITY TERMINAL", True, GREEN)
         self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 20))
 
-        self.draw_status_bars(100, 90, 300, 30, "TIME", self.time_remaining, self.mission_time, BLUE)
-        self.draw_status_bars(WIDTH - 400, 90, 300, 30, "DETECTION", self.detection_level, self.max_detection, RED)
+        self.draw_status_bars(100, 90, 300, 30, "TIME", self.time_remaining, self.mission_time, BLUE, self.icons['clock'])
+        self.draw_status_bars(WIDTH - 400, 90, 300, 30, "DETECTION", self.detection_level, self.max_detection, RED, self.icons['radar'])
 
-        obj_text = self.font.render(f"Objectives: {self.objective_progress}/{self.objectives_needed}", True, GREEN)
-        self.screen.blit(obj_text, (WIDTH//2 - obj_text.get_width()//2, 90))
+        self.draw_mission_progress(WIDTH//2 - 150, 85, 300, 35)
 
         for i, msg in enumerate(self.feedback_messages):
             txt = self.font.render(msg['text'], True, msg['color'])
@@ -483,20 +592,30 @@ class StealthGame:
         for key in ['camera', 'lights', 'distract', 'hack']:
             self.buttons[key].draw(self.screen, self.small_font)
         
-    def draw_status_bars(self, x, y, width, height, label, value, max_value, color):
-        label_text = self.small_font.render(label, True, WHITE)
+        self.draw_toasts()
+
+        for key in ['camera', 'lights', 'distract', 'hack']:
+            self.buttons[key].draw(self.screen, self.small_font)
+            show_tooltip = self.buttons[key].is_hovered()
+            self.buttons[key].draw(self.screen, self.small_font, show_tooltip)
+
+    def draw_status_bars(self, x, y, width, height, label, value, max_value, color, icon=None):
+        icon_x = x - 35
+        if icon:
+            self.screen.blit(icon, (icon_x, y + height//2 - icon.get_height()//2))
+
+        label_text = self.small_font.render(label, True, WHITE if not self.high_contrast else YELLOW)
         self.screen.blit(label_text, (x, y - 25))
 
-        pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
+        bg_color = DARK_GRAY if not self.high_contrast else BLACK
+        pygame.draw.rect(self.screen, bg_color, (x, y, width, height))
 
         if max_value <= 0:
-            fill_width = 0
-        else:
-            fill_width = int((value / max_value) * width)
-        fill_width = max(0, min(fill_width, width))
-        # pulsing effect for detection bar when high
-        draw_color = color
-        if max_value > 0:
+            fill_width = (value / max_value) * width
+            fill_width = max(0, min(fill_width, width))
+        
+            # pulsing effect for detection bar when high
+            draw_color = color
             if label == "DETECTION":
                 ratio = value / max_value
                 if ratio >= 0.6:
@@ -519,12 +638,87 @@ class StealthGame:
                         min(255, int(c + (t - c) * pulse * amp))
                         for c, t in zip(color, target)
                     )
-        pygame.draw.rect(self.screen, draw_color, (x, y, fill_width, height))
+            pygame.draw.rect(self.screen, draw_color, (x, y, fill_width, height))
 
-        pygame.draw.rect(self.screen, WHITE, (x, y, width, height), 2)
+        # Border
+        border_color = WHITE if not self.high_contrast else YELLOW
+        pygame.draw.rect(self.screen, border_color, (x, y, width, height), 2)
 
-        value_text = self.small_font.render(f"{int(value)}/{max_value}", True, WHITE)
-        self.screen.blit(value_text, (x + width//2 - value_text.get_width()//2, y + height//2 - value_text.get_height()//2))
+        if label == 'TIME':
+            value_text = self.small_font.render(f"{int(value)}/{max_value}", True, WHITE if not self.high_contrast else YELLOW)
+        else:
+            value_text = self.small_font.render(f"{int(value)}%", True, WHITE if not self.high_contrast else YELLOW)
+        
+        text_rect = value_text.get_rect(center=(x + width//2, y + height//2))
+        self.screen.blit(value_text, text_rect)
+
+    def draw_mission_progress(self, x, y, width, height):
+        # Icon
+        icon = self.icons['target']
+        self.screen.blit(icon, (x - 35, y + height//2 - icon.get_height()//2))
+
+        # Label
+        label = self.small_font.render("MISSION", True, WHITE if not self.high_contrast else YELLOW)
+        self.screen.blit(label, (x, y - 25))
+
+        # Progress
+        progress = self.objective_progress / self.objectives_needed
+
+        # Background
+        bg_color = DARK_GRAY if not self.high_contrast else BLACK
+        pygame.draw.rect(self.screen, bg_color, (x, y, width, height))
+
+        # Fill
+        fill_width = int(progress * width)
+        gradient_color = (
+            int(255 * (1 - progress) + 0 * progress),
+            int(0 * (1 - progress) + 255 * progress),
+            0
+        )
+        pygame.draw.rect(self.screen, gradient_color, (x, y, fill_width, height))
+
+        # Border
+        border_color = WHITE if not self.high_contrast else YELLOW
+        pygame.draw.rect(self.screen, border_color, (x, y, width, height), 2)
+
+        # Percentage
+        percentage = int(progress * 100)
+        progress_text = self.font.render(f"{percentage}%", True, WHITE if not self.high_contrast else YELLOW)
+        text_rect = progress_text.get_rect(center=(x + width//2, y + height//2))
+        self.screen.blit(progress_text, text_rect)
+
+    def draw_toasts(self):
+        """
+        Draw toast notifications.
+        """
+        toast_x = WIDTH // 2
+        toast_y = HEIGHT - 100
+
+        for i, toast in enumerate(self.toasts):
+            # Slide up animation
+            target_y = toast_y - i * 40
+
+            # Redner text
+            text_surf = self.font.render(toast['text'], True, toast['color'])
+            text_surf.set_alpha(toast.get('alpha', 255))
+
+            # Background
+            padding = 10
+            bg_rect = pygame.Rect(
+                toast_x - text_surf.get_width() // 2 - padding,
+                target_y - padding,
+                text_surf.get_width() + 2 * padding,
+                text_surf.get_height() + 2 * padding
+            )
+
+            bg_surf = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+            bg_surf.fill((0, 0, 0, 180))
+            self.screen.blit(bg_surf, bg_rect.topleft)
+            pygame.draw.rect(self.screen, toast['color'], bg_rect, 2, border=5)
+
+            # Text
+            text_rect = text_surf.get_rect(center=(toast_x, target_y + text_surf.get_height() // 2))
+            self.screen.blit(text_surf, text_rect)
 
     def draw_end_screen(self, message, color):
         text = self.title_font.render(message, True, color)
