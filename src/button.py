@@ -37,11 +37,14 @@ class Button:
             self._draw_radial_cooldown(screen, scaled_rect)
         
         if self.icon:
-            icon_rect = self.icon.get_rect(center=scaled_rect.center)
+            icon_rect = self.icon.get_rect(center=(scaled_rect.left + 20, scaled_rect.centery))
             screen.blit(self.icon, icon_rect)
 
         text_surf = font.render(self.text, True, (255,255,255))
-        text_rect = text_surf.get_rect(center=scaled_rect.center)
+        if self.icon:
+            text_rect = text_surf.get_rect(center=(scaled_rect.centerx + 10, scaled_rect.centery))
+        else:
+            text_rect = text_surf.get_rect(center=scaled_rect.center)
         screen.blit(text_surf, text_rect)
 
         if self.hotkey:
@@ -53,35 +56,43 @@ class Button:
             self._draw_tooltip(screen, font)
     
     def _draw_radial_cooldown(self, screen: pygame.Surface, rect: pygame.Rect):
-        """
-        Draw a radial cooldown overlay on the button.
-        """
+        """Draw radial cooldown indicator overlay"""
         progress = 1.0 - (self.cooldown / self.max_cooldown)
         center = rect.center
         radius = min(rect.width, rect.height) // 2 - 4
-
+        
+        # Create overlay surface
         overlay = pygame.Surface((rect.width, rect.height), pygame.SRCALPHA)
-
+        overlay_center = (rect.width // 2, rect.height // 2)
+        
+        # Draw the "empty" part (what remains on cooldown) as a pie slice
         if progress < 1.0:
-            points = [center]
-            start_angle = -math.pi / 2
-            end_angle = start_angle + (2 * math.pi * progress)
-
-            steps = 32
+            # Create points for the unfilled arc (cooldown remaining)
+            points = [overlay_center]
+            start_angle = -math.pi / 2  # Start at top (12 o'clock)
+            end_angle = start_angle + (2 * math.pi * (1.0 - progress))  # Sweep clockwise for remaining time
+            
+            # Generate arc points with more steps for smoother circle
+            steps = 64
             for i in range(steps + 1):
                 angle = start_angle + (end_angle - start_angle) * (i / steps)
-                x = center[0] + radius * math.cos(angle) - rect.left
-                y = center[1] + radius * math.sin(angle) - rect.top
+                x = overlay_center[0] + radius * math.cos(angle)
+                y = overlay_center[1] + radius * math.sin(angle)
                 points.append((x, y))
             
+            # Draw the darkened wedge showing time remaining
             if len(points) > 2:
-                pygame.draw.polygon(overlay, (0, 0, 0, 160), points)
-            
+                pygame.draw.polygon(overlay, (0, 0, 0, 180), points)
+                # Draw outline for the arc
+                if len(points) > 3:
+                    pygame.draw.lines(overlay, (100, 100, 100, 200), False, points[1:], 2)
+        
         screen.blit(overlay, rect.topleft)
-
+         
+        # Draw cooldown text in center
         cooldown_font = pygame.font.Font(None, 24)
-        cd_text = cooldown_font.render(f"{int(math.ceil(self.cooldown))}", True, (255,255,0))
-        cd_rect = cd_text.get_rect(center=rect.center)
+        cd_text = cooldown_font.render(f"{math.ceil(self.cooldown)}s", True, (255,255,0))
+        cd_rect = cd_text.get_rect(center=center)
         screen.blit(cd_text, cd_rect)
 
     def _draw_tooltip(self, screen: pygame.Surface, font: pygame.font.Font):
@@ -89,7 +100,10 @@ class Button:
         Draw the tooltip near the button.
         """
         tooltip_font = pygame.font.Font(None, 20)
-        lines = self.tooltip.split('\n')
+        tooltip_text = self.tooltip
+        if self.cooldown > 0:
+            tooltip_text += f"\n[Cooldown: {math.ceil(self.cooldown)}s remaining]"
+        lines = tooltip_text.split('\n')
 
         max_width = max(tooltip_font.size(line)[0] for line in lines)
         line_height = tooltip_font.get_linesize()
@@ -102,12 +116,15 @@ class Button:
             line_height * len(lines) + padding * 2
         )
 
-        pygame.draw.rect(screen, (40,40,40), tooltip_rect, border_radius=4)
-        pygame.draw.rect(screen, (200,200,200), tooltip_rect, 1, border_radius=4)
+        bg_color = (60, 40, 40) if self.cooldown > 0 else (40, 40, 40)
+        border_color = (255, 100, 100) if self.cooldown > 0 else (200, 200, 200)
+        pygame.draw.rect(screen, bg_color, tooltip_rect, border_radius=4)
+        pygame.draw.rect(screen, border_color, tooltip_rect, 1, border_radius=4)
 
         y = tooltip_rect.top + padding
         for line in lines:
-            text_surf = tooltip_font.render(line, True, (255,255,255))
+            color = (255, 255, 100) if line.startswith("[Cooldown:") else (255,255,255)
+            text_surf = tooltip_font.render(line, True, color)
             screen.blit(text_surf, (tooltip_rect.left + padding, y))
             y += line_height
 
@@ -135,12 +152,18 @@ class Button:
         target_scale = hover_scale * (0.92 if self.press_timer > 0 else 1.0)
         self.scale_t += (target_scale - self.scale_t) * min(1.0, dt / 0.08)
 
+    def is_clicked(self, pos):
+        """
+        Check if the button is currently clicked.
+        """
+        return self.rect.collidepoint(pos) and self.active
+    
     def is_hovered(self):
         """
         Check if the button is currently hovered.
         """
         mouse_pos = pygame.mouse.get_pos()
-        return self.rect.collidepoint(mouse_pos) and self.active
+        return self.rect.collidepoint(mouse_pos)
 
     def press(self):
         self.press_timer = self.press_duration
