@@ -43,8 +43,10 @@ class StealthGame:
         self.state = "menu"
 
         self.transition_alpha = 0
-        self.transition_speed = 500
+        self.transition_speed = 700
+        self.transition_phase = "none"
         self.transitioning_to = None
+        self.transition_video_frame = None
 
         self._load_icons()
         self.mission_time = 60
@@ -83,6 +85,9 @@ class StealthGame:
 
         # Initialize background video
         self.init_background()
+
+        # Load transition video
+        self._load_transition_video()
         
         # messages to show feedback to player
         self.feedback_messages = []
@@ -96,6 +101,43 @@ class StealthGame:
         # Toast notification system
         self.toasts = []
     
+    def _load_transition_video(self):
+        """
+        Load transition video for scene changes.
+        """
+        try:
+            video_path = os.path.join(os.path.dirname(__file__), "..", "assets", "videos", "hacking bg.mp4")
+            if os.path.exists(video_path):
+                self.transition_cap = cv2.VideoCapture(video_path)
+                self.transition_frame_count = int(self.transition_cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                self.transition_fps = self.transition_cap.get(cv2.CAP_PROP_FPS)
+                print(f"Loaded transition video: {self.transition_frame_count} frames at {self.transition_fps} fps")
+            else:
+                print(f"Transition video not found: {video_path}")
+                self.transition_cap = None
+        except ImportError:
+            print("OpenCV not available for transition video.")
+            self.transition_cap = None
+        except Exception as e:
+            print(f"Error loading transition video: {e}")
+            self.transition_cap = None
+    
+    def _get_transition_frame(self):
+        """
+        Get current frame from transition video.
+        """
+        if not self.transition_cap:
+            return None
+        ret, frame = self.transition_cap.read()
+        if not ret:
+            self.transition_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            ret, frame = self.transition_cap.read()
+        if ret:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = cv2.resize(frame, (WIDTH, HEIGHT))
+            return pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+        return None
+
     def _init_fonts(self):
         """
         Initialize fonts based on current scale and contrast settings.
@@ -329,6 +371,10 @@ class StealthGame:
     def start_transition(self, target_state: str):
         self.transitioning_to = target_state
         self.transition_alpha = 0
+        self.transition_phase = "fade_in"
+
+        if self.transition_cap:
+            self.transition_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
     def _handle_keyboard(self, key):
         """
@@ -429,12 +475,23 @@ class StealthGame:
 
     def update(self, dt):
         if self.transitioning_to:
-            self.transition_alpha += self.transition_speed * dt
-            if self.transition_alpha >= 255:
-                self.transition_alpha = 255
-                self.state = self.transitioning_to
-                self.transitioning_to = None
-                self.transition_alpha = 0
+
+            if self.transition_phase == "fade_in":
+                self.transition_alpha += self.transition_speed * dt
+                if self.transition_alpha >= 255:
+                    self.transition_alpha = 255
+                    self.state = self.transitioning_to
+                    self.transition_phase = "fade_out"
+            elif self.transition_phase == "fade_out":
+                self.transition_alpha -= self.transition_speed * dt
+                if self.transition_alpha <= 0:
+                    self.transition_alpha = 0
+                    self.transitioning_to = None
+                    self.transition_phase = "none"
+
+            if self.transition_cap:
+                self.transition_video_frame = self._get_transition_frame()
+
             return
         
         if self.state != "playing":
@@ -562,6 +619,7 @@ class StealthGame:
         canvas.fill((0,0,0))
         old_screen = self.screen
         self.screen = canvas
+
         if self.bg_frame_surf:
             bg = pygame.transform.scale(self.bg_frame_surf, (WIDTH, HEIGHT))
             self.screen.blit(bg, (0, 0))
@@ -584,12 +642,10 @@ class StealthGame:
         
         self.particle_sys.draw_float_texts(self.screen, self.font)
 
-        # Draw transition fade
-        if self.transition_alpha > 0:
-            fade_surf = pygame.Surface((WIDTH, HEIGHT))
-            fade_surf.fill(BLACK)
-            fade_surf.set_alpha(int(self.transition_alpha))
-            self.screen.blit(fade_surf, (0, 0))
+        if self.transition_alpha > 0 and self.transition_video_frame:
+            video_surface = self.transition_video_frame.copy()
+            video_surface.set_alpha(int(self.transition_alpha))
+            self.screen.blit(video_surface, (0, 0))
 
         # restore screen and blit canvas with offset
         self.screen = old_screen
