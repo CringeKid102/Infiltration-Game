@@ -3,13 +3,11 @@ import random
 import math
 import os
 import cv2
-import numpy as np
 from animation import Animation
 from button import Button
 from guard import Guard
 from particles import ParticleSystem
 from transition import TransitionManager, TransitionType
-from typing import Tuple
 
 # Initialize Pygame
 pygame.init()
@@ -32,18 +30,26 @@ DARK_GREEN = (0, 100, 0)
     
 class StealthGame:
     def __init__(self):
+        """
+        Initialize the game.
+        """
         self.screen = pygame.display.set_mode((WIDTH, HEIGHT))
         pygame.display.set_caption("Terminal Infiltration")
         self.clock = pygame.time.Clock()
         self.running = True
 
-        self.font_scale = 1.0
-        self.high_contrast = False
-        self._init_fonts()
+        # Reusable render canvas to avoid reallocating each frame
+        self.canvas = pygame.Surface((WIDTH, HEIGHT)).convert_alpha()
+
+        # Initialize fonts
+        self.title_font = pygame.font.Font(None, 48)
+        self.font = pygame.font.Font(None, 28)
+        self.small_font = pygame.font.Font(None, 22)
 
         self.state = "menu"
-
         self._load_icons()
+        
+        # Game parameters
         self.mission_time = 60
         self.time_remaining = self.mission_time
         self.detection_level = 0
@@ -51,10 +57,10 @@ class StealthGame:
         self.objective_progress = 0
         self.objectives_needed = 5
 
+        # Smooth animated values
         self.animated_time = self.mission_time
         self.animated_detection = 0.0
         self.animated_objectives = 0.0
-        self.anim_speed = 4.0
 
         # Camera blink animation
         self.camera_blink_time = 0.0
@@ -69,13 +75,13 @@ class StealthGame:
 
         self.create_buttons()
 
+        # System states
         self.camera_disabled = False
         self.camera_disable_time = 0
         self.lights_disabled = False
         self.lights_disable_time = 0
 
         self.event_timer = 0
-        self.event_interval = 5
         self.current_event = None
 
         # Initialize background video
@@ -91,25 +97,26 @@ class StealthGame:
         self.particle_sys = ParticleSystem()
 
         # Initialize transition system
-        self.transition_manager = TransitionManager(WIDTH, HEIGHT, default_speed=700)
-
-        # Toast notification system
+        self.transition_manager = TransitionManager(WIDTH, HEIGHT, 700)
         self.toasts = []
     
-
-    def _init_fonts(self):
+    def _on_state_change(self, target_state: str):
         """
-        Initialize fonts based on current scale and contrast settings.
+        Called when transition reaches midpoint to change game state.
+        Args:
+            target_state (str): The state to switch to.
         """
-        base_title = int(48 * self.font_scale)
-        base_normal = int(28 * self.font_scale)
-        base_small = int(22 * self.font_scale)
-
-        self.title_font = pygame.font.Font(None, base_title)
-        self.font = pygame.font.Font(None, base_normal)
-        self.small_font = pygame.font.Font(None, base_small)
+        self.state = target_state
  
     def create_icon(self, color, symbol):
+        """
+        Create a simple icon surface.
+        Args:
+            color (Tuple[int,int,int]): Color of the icon.
+            symbol (str): Symbol to draw on the icon.
+        Returns:
+            pygame.Surface: Icon surface.
+        """
         icon_size =  24
         surf = pygame.Surface((icon_size, icon_size), pygame.SRCALPHA)
         pygame.draw.circle(surf, color, (icon_size//2, icon_size//2), icon_size//2-2)
@@ -122,7 +129,6 @@ class StealthGame:
         """
         Load button icons.
         """
-
         self.icons = {
             'clock': self.create_icon((100, 150, 255), 'T'),
             'radar': self.create_icon((255, 100, 100), 'D'),
@@ -134,83 +140,41 @@ class StealthGame:
         }
     
     def load_guard_animations(self):
+        """
+        Load guard animations.
+        """
         base = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets", "sprites"))
-        guard_anim_config = {
-            'default_guard': {
-                'sheet': os.path.join(base, "guard_sheet.png"),
-                'frame_width': 32,
-                'frame_height': 48,
-                'scale': 1.0,
-                'animations': {
-                    'idle': {'row': 0, 'start_col': 0, 'num_frames': 4, 'speed': 0.2, 'loop': True},
-                    'walk': {'row': 1, 'start_col': 0, 'num_frames': 6, 'speed': 0.1, 'loop': True},
-                    'alert': {'row': 2, 'start_col': 0, 'num_frames': 4, 'speed': 0.15, 'loop': True}
-                },
-            }
-        }
-
-        self.guard_animation_sets = {}
-        for key, info in guard_anim_config.items():
-            sheet = info['sheet']
-            try:
-                anim_master = Animation(sheet, info['frame_width'], info['frame_height'], scale=info.get('scale', 1.0))
-            except Exception as e:
-                print(f"Error loading animation sheet {sheet}: {e}")
-                self.guard_animation_sets[key] = {}
-                continue
-
-            anims = {}
-            try:
-                for name, params in info['animations'].items():
-                    anim_master.add_animation(
-                        name,
-                        row=params['row'],
-                        start_col=params.get('start_col', 0),
-                        num_frames=params['num_frames'],
-                        speed=params.get('speed', 0.1),
-                        loop=params.get('loop', True),
-                        pingpong=params.get('pingpong', False)
-                    )
-                    # Store the raw animation data from the master
-                    anims[name] = {
-                        'frames': anim_master.animations[name]['frames'],
-                        'durations': anim_master.animations[name]['durations'],
-                        'loop': anim_master.animations[name]['loop'],
-                        'pingpong': anim_master.animations[name].get('pingpong', False)
-                    }
-            except Exception as e:
-                print(f"load_guard_animations: failed to add animation {name}: {e}")
-            # store frame data per sheet key
-            self.guard_animation_sets[key] = {
-                'sheet': sheet,
-                'frame_w': info['frame_width'],
-                'frame_h': info['frame_height'],
-                'scale': info.get('scale', 1.0),
-                'anims': anims
-            }
-        
-        # assign per guard animation instances
-        default_cfg = self.guard_animation_sets.get('default_guard', None)
-        if default_cfg:
+        sheet_path = os.path.join(base, "guard_sheet.png")
+        try:
             for guard in self.guards:
                 guard_set = {}
-                for name, data in default_cfg['anims'].items():
-                    try:
-                        # create a new animation instance per guard
-                        anim_inst = Animation(default_cfg['sheet'], default_cfg['frame_w'], default_cfg['frame_h'], scale=default_cfg['scale'])
-                        anim_inst.add_animation(name, frames=data['frames'], durations=data['durations'], loop=data.get('loop', True), pingpong=data.get('pingpong', False))
-                        guard_set[name] = anim_inst
-                    except Exception as e:
-                        print(f"load_guard_animations: failed to instantiate animation '{name}' for guard: {e}")
+                animations = [
+                    ('idle', {'row': 0, 'start_col': 0, 'num_frames': 4, 'speed': 0.2, 'loop': True}),
+                    ('walk', {'row': 1, 'start_col': 0, 'num_frames': 6, 'speed': 0.1, 'loop': True}),
+                    ('alert', {'row': 2, 'start_col': 0, 'num_frames': 4, 'speed': 0.15, 'loop': True})
+                ]
+                
+                for name, params in animations:
+                    anim = Animation(sheet_path, 32, 48)
+                    # params already includes 'loop'; avoid passing it twice
+                    anim.add_animation(name, **params)
+                    # Ensure the animation object has an active animation set
+                    anim.set_animation(name, reset=True)
+                    guard_set[name] = anim
+                
                 guard.animation_set = guard_set
-                if 'idle' in guard.animation_set:
-                    guard.current_anim_name = 'idle'
+                guard.current_anim_name = 'idle'
+        except Exception as e:
+            pass
         
-        # Initialize guard random phases so they don't all sync
+        # Randomize guard timings
         for guard in self.guards:
             guard.current_time = random.uniform(0, guard.patrol_time)
     
     def init_background(self):
+        """
+        Initialize background video.
+        """
         self.bg_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets", "videos", "hacking bg.mp4"))
         self.bg_cap = None
         self.bg_frame_surf = None
@@ -228,6 +192,11 @@ class StealthGame:
             self.bg_frame_surf = None
     
     def update_background(self, dt):
+        """
+        Update the background video frame.
+        Args:
+            dt (float): Delta time since last update.
+        """
         if not self.bg_cap:
             return
         ret, frame = self.bg_cap.read()
@@ -245,6 +214,9 @@ class StealthGame:
             pass
 
     def create_buttons(self):
+        """
+        Create action buttons for the game.
+        """
         button_y = 450
         button_width = 140
         button_height = 50
@@ -267,19 +239,25 @@ class StealthGame:
             'menu': Button(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50, "START MISSION", DARK_GREEN, GREEN)
         }
 
-    def add_toast(self, text: str, color: Tuple[int,int,int], duration: float = 2.0):
+    def add_toast(self, text: str, color, duration: float = 2.0):
         """
         Add a toast notification.
+        Args:
+            text (str): The text of the toast.
+            color (Tuple[int,int,int]): The color of the toast text.
+            duration (float): Duration in seconds the toast should be visible.
         """
         self.toasts.append({
             'text': text,
             'color': color,
             'time': duration,
             'duration': duration,
-            'y_offset': 0,
         })
 
     def reset_game(self):
+        """
+        Reset the game state.
+        """
         self.time_remaining = self.mission_time
         self.animated_time = self.mission_time
         self.detection_level = 0
@@ -294,16 +272,21 @@ class StealthGame:
         self.lights_disable_time = 0
         self.event_timer = 0
         self.current_event = None
+
         for guard in self.guards:
             guard.alert = False
             guard.alert_time = 0.0
             guard.current_time = random.uniform(0, guard.patrol_time)
+        
         self.create_buttons()
         self.particle_sys.clear()
         self.toasts.clear()
         self.feedback_messages.clear()
 
     def handle_events(self):
+        """
+        Handle user input events.
+        """
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
@@ -317,7 +300,6 @@ class StealthGame:
                 if self.state == "menu":
                     if self.buttons['menu'].is_clicked(pos):
                         self.reset_game()
-                        # Start video fade transition to playing
                         video_path = os.path.join(os.path.dirname(__file__), "..", "assets", "videos", "hacking bg.mp4")
                         self.transition_manager.start_transition(
                             "playing",
@@ -334,7 +316,6 @@ class StealthGame:
                 elif self.state in ["success", "failure"]:
                     if self.buttons['menu'].is_clicked(pos):
                         self.reset_game()
-                        # Start slide transition back to menu
                         self.transition_manager.start_transition(
                             target_state="menu",
                             transition_type=TransitionType.SLIDE_DOWN,
@@ -346,6 +327,8 @@ class StealthGame:
     def _handle_keyboard(self, key):
         """
         Handle keyboard shortcuts for buttons.
+        Args:
+            key (int): The pygame key code.
         """
         if self.state == "playing":
             action_map = {
@@ -358,24 +341,13 @@ class StealthGame:
             button_key = action_map.get(key)
             if button_key and self.buttons[button_key].active:
                 self._handle_game_clicks(self.buttons[button_key].rect.center)
-        
-        elif self.state == 'menu' and key == pygame.K_RETURN:
-            self.reset_game()
-            self.state = "playing"
-
-        if key == pygame.K_F1:
-            self.font_scale = min(1.5, self.font_scale + 0.1)
-            self._init_fonts()
-            self.add_toast(f"Font Scale: {self.font_scale*100}%", YELLOW)
-        elif key == pygame.K_F2:
-            self.font_scale = max(0.8, self.font_scale - 0.1)
-            self._init_fonts()
-            self.add_toast(f"Font Scale: {self.font_scale*100}%", YELLOW)
-        elif key == pygame.K_F3:
-            self.high_contrast = not self.high_contrast
-            self.add_toast(f"High Contrast {'Enabled' if self.high_contrast else 'Disabled'}", YELLOW)
 
     def _handle_game_clicks(self, pos):
+        """
+        Handle clicks on game action buttons.
+        Args:
+            pos (Tuple[int, int]): The position of the mouse click.
+        """
         if self.buttons['camera'].is_clicked(pos):
             self.buttons['camera'].press()
             self.camera_disabled = True
@@ -386,7 +358,6 @@ class StealthGame:
             self.camera_blink_active = True
             delta = -15
             self.detection_level = max(0, self.detection_level + delta)
-            # smoke effect at button and floating text
             bx, by = self.buttons['camera'].rect.center
             self.particle_sys.spawn_smoke(bx, by, count=12)
             self.particle_sys.add_detection_popup(delta, bx, by)
@@ -405,6 +376,7 @@ class StealthGame:
         
         elif self.buttons['distract'].is_clicked(pos):
             self.buttons['distract'].press()
+            # Clear all guard alerts
             for guard in self.guards:
                 guard.alert = False
             delta = -20
@@ -417,6 +389,7 @@ class StealthGame:
         
         elif self.buttons['hack'].is_clicked(pos):
             self.buttons['hack'].press()
+            # Success chance decreases with detection level
             success_chance = max(0.15, 1.0 - (self.detection_level / 80.0))
             if random.random() < success_chance:
                 self.objective_progress += 1
@@ -441,10 +414,13 @@ class StealthGame:
                 self.particle_sys.start_shake(8.0, 0.4)
 
     def update(self, dt):
-        # Update transition system
+        """
+        Update the game state.
+        Args:
+            dt (float): Delta time since last update.
+        """
         transition_result = self.transition_manager.update(dt)
 
-        # Don't update game state during transitions
         if transition_result['active']:
             return
         
@@ -452,13 +428,13 @@ class StealthGame:
             return
 
         self.time_remaining -= dt
-        # advance UI timer for pulsing effects
         self.ui_time += dt
 
+        # Smooth interpolation for animated values
         lerp = lambda a, b, t: a + (b - a) * min(1.0, t)
-        self.animated_time = lerp(self.animated_time, self.time_remaining, dt * self.anim_speed)
-        self.animated_detection = lerp(self.animated_detection, self.detection_level, dt * self.anim_speed)
-        self.animated_objectives = lerp(self.animated_objectives, self.objective_progress, dt * self.anim_speed)
+        self.animated_time = lerp(self.animated_time, self.time_remaining, dt * 4.0)
+        self.animated_detection = lerp(self.animated_detection, self.detection_level, dt * 4.0)
+        self.animated_objectives = lerp(self.animated_objectives, self.objective_progress, dt * 4.0)
 
         # Camera blink animation
         if self.camera_blink_time > 0:
@@ -484,6 +460,7 @@ class StealthGame:
         for guard in self.guards:
             guard.update(dt)
         
+        # Base detection increases over time
         base_detection = 2 * dt
         if self.camera_disabled:
             base_detection *= 0.3
@@ -492,6 +469,7 @@ class StealthGame:
         
         self.detection_level += base_detection
 
+        # Guards can spot player in danger zone
         for guard in self.guards:
             if 0.4 < guard.position < 0.6:
                 detection_chance = 0.02
@@ -504,17 +482,17 @@ class StealthGame:
                     guard.alert = True
                     delta = 5
                     self.detection_level += delta
-                    # pop up near guard position
                     gx = 100 + int(guard.position * 800)
                     gy = 150 + (self.guards.index(guard) * 60) + 20
                     self.particle_sys.spawn_sparks(gx, gy, count=6, color=(255,180,80))
                     self.particle_sys.add_detection_popup(+delta, gx, gy)
         
         self.event_timer += dt
-        if self.event_timer >= self.event_interval:
+        if self.event_timer >= 5:
             self.event_timer = 0
             self.trigger_random_event()
         
+        # handle current event effects
         if isinstance(self.current_event, dict):
             dps = self.current_event.get('dps', 0)
             if dps:
@@ -523,14 +501,15 @@ class StealthGame:
             if self.current_event['time_left'] <= 0:
                 self.current_event = None
         
-        # update particle system
         self.particle_sys.update(dt)
         
+        # Cleanup feedback messages
         for m in list(self.feedback_messages):
             m['time'] -= dt
             if m['time'] <= 0:
                 self.feedback_messages.remove(m)
 
+        # Check win/loss conditions
         self.detection_level = max(0, min(self.detection_level, self.max_detection))
         if self.objective_progress >= self.objectives_needed:
             self.state = "success"
@@ -539,6 +518,7 @@ class StealthGame:
             self.state = "failure"
             self.particle_sys.clear()
         
+        # Update toasts
         for toast in list(self.toasts):
             toast['time'] -= dt
             if toast['time'] <= 0:
@@ -548,11 +528,13 @@ class StealthGame:
                 toast['alpha'] = int(255 * min(1.0, alpha_ratio * 2.0))
         
     def trigger_random_event(self):
+        """
+        Trigger a random security event.
+        """
         events = [
             {'text': "Security sweep initiated", 'duration': 6.0, 'instant': random.randint(5, 12), 'dps': 1.0},
             {'text': "Guard shift change", 'duration': 8.0, 'instant': 0, 'dps': 0.5},
             {'text': "System scan detected", 'duration': 5.0, 'instant': random.randint(8, 16), 'dps': 1.5},
-            {'text': "Patrol route adjusted", 'duration': 10.0, 'instant': 0, 'dps': 0.3},
             ]
         ev = random.choice(events)
         inst = ev.get('instant', 0)
@@ -563,16 +545,17 @@ class StealthGame:
         self.detection_level += inst
         ev['time_left'] = ev['duration']
         self.current_event = ev
-        # screen shake for big events
         if inst >= 10:
             self.particle_sys.start_shake(9.0, 0.5)
     
     def draw(self):
-        # render everything to a temp canva so we can blit screen shake offset
-        canvas = pygame.Surface((WIDTH, HEIGHT)).convert_alpha()
-        canvas.fill((0,0,0))
+        """
+        Draw the current game state.
+        """
+        # render everything to a temp canvas so we can blit with screen shake offset
+        self.canvas.fill((0,0,0))
         old_screen = self.screen
-        self.screen = canvas
+        self.screen = self.canvas
 
         if self.bg_frame_surf:
             bg = pygame.transform.scale(self.bg_frame_surf, (WIDTH, HEIGHT))
@@ -599,13 +582,16 @@ class StealthGame:
         # restore screen and blit canvas with offset
         self.screen = old_screen
         self.screen.fill(BLACK)
-        self.screen.blit(canvas, (ox, oy))
+        self.screen.blit(self.canvas, (ox, oy))
 
         self.transition_manager.draw(self.screen)
 
         pygame.display.flip()
     
     def draw_menu(self):
+        """
+        Draw the main menu.
+        """
         title = self.title_font.render("Terminal Infiltration", True, GREEN)
         title_rect = title.get_rect(center=(WIDTH//2, 150))
         self.screen.blit(title, title_rect)
@@ -627,6 +613,9 @@ class StealthGame:
         self.buttons['menu'].draw(self.screen, self.font)
 
     def draw_game(self):
+        """
+        Draw the main game UI.
+        """
         title = self.title_font.render("SECURITY TERMINAL", True, GREEN)
         self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 20))
 
@@ -634,15 +623,18 @@ class StealthGame:
         self.draw_status_bars(WIDTH - 325, 90, 300, 30, "DETECTION", self.animated_detection, self.max_detection, RED, self.icons['radar'])
         self.draw_mission_progress(WIDTH//2 - 150, 90, 300, 30)
 
+        # Show feedback messages
         for i, msg in enumerate(self.feedback_messages):
             txt = self.font.render(msg['text'], True, msg['color'])
             txt_rect = txt.get_rect(center=(WIDTH//2, 130 + i * 30))
             self.screen.blit(txt, txt_rect)
 
+        # Draw guard monitors
         monitor_y = 150
         for i, guard in enumerate(self.guards):
             guard.draw(self.screen, 100, monitor_y + i * 60, 800, 40)
 
+        # System statuses
         status_y = 350
         systems = [
             ("CAMERAS", "OFFLINE" if self.camera_disabled else "ONLINE", 
@@ -660,6 +652,7 @@ class StealthGame:
             text = self.small_font.render(f"{name}: {status}", True, color)
             self.screen.blit(text, (100 + i * 250, status_y))
 
+        # Show current event
         if self.current_event:
             ev_text = self.current_event['text'] if isinstance(self.current_event, dict) else str(self.current_event)
             event_text = self.small_font.render(f"! {ev_text}", True, YELLOW)
@@ -672,11 +665,23 @@ class StealthGame:
         self.draw_toasts()
 
     def draw_status_bars(self, x, y, width, height, label, value, max_value, color, icon=None):
-        label_text = self.small_font.render(label, True, WHITE if not self.high_contrast else YELLOW)
+        """
+        Draw a status bar with label, value, and icon.
+        Args:
+            x (int): X position.
+            y (int): Y position.
+            width (int): Width of the bar.
+            height (int): Height of the bar.
+            label (str): Label text.
+            value (float): Current value.
+            max_value (float): Maximum value.
+            color (Tuple[int,int,int]): Color of the filled portion.
+            icon (pygame.Surface): Optional icon to display.
+        """
+        label_text = self.small_font.render(label, True, WHITE)
         self.screen.blit(label_text, (x, y - 25))
 
-        bg_color = DARK_GRAY if not self.high_contrast else BLACK
-        pygame.draw.rect(self.screen, bg_color, (x, y, width, height))
+        pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
 
         if max_value > 0:
             fill_width = int((value / max_value) * width)
@@ -709,8 +714,7 @@ class StealthGame:
             pygame.draw.rect(self.screen, draw_color, (x, y, fill_width, height))
 
         # Border
-        border_color = WHITE if not self.high_contrast else YELLOW
-        pygame.draw.rect(self.screen, border_color, (x, y, width, height), 2)
+        pygame.draw.rect(self.screen, WHITE, (x, y, width, height), 2)
 
         # Icon
         if icon:
@@ -719,24 +723,31 @@ class StealthGame:
             self.screen.blit(icon, (icon_x, icon_y))
 
         if label == 'TIME':
-            value_text = self.small_font.render(f"{int(value)}s", True, WHITE if not self.high_contrast else YELLOW)
+            value_text = self.small_font.render(f"{int(value)}s", True, WHITE)
         else:
-            value_text = self.small_font.render(f"{int(value)}%", True, WHITE if not self.high_contrast else YELLOW)
+            value_text = self.small_font.render(f"{int(value)}%", True, WHITE)
         
         text_rect = value_text.get_rect(center=(x + width//2, y + height//2))
         self.screen.blit(value_text, text_rect)
 
     def draw_mission_progress(self, x, y, width, height):
+        """
+        Draw the mission progress bar.
+        Args:
+            x (int): X position.
+            y (int): Y position.
+            width (int): Width of the bar.
+            height (int): Height of the bar.
+        """
         # Label
-        label = self.small_font.render("MISSION", True, WHITE if not self.high_contrast else YELLOW)
+        label = self.small_font.render("MISSION", True, WHITE)
         self.screen.blit(label, (x, y - 25))
 
         # Progress
         progress = self.animated_objectives / self.objectives_needed
 
         # Background
-        bg_color = DARK_GRAY if not self.high_contrast else BLACK
-        pygame.draw.rect(self.screen, bg_color, (x, y, width, height))
+        pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
 
         # Fill
         fill_width = int(progress * width)
@@ -748,8 +759,7 @@ class StealthGame:
         pygame.draw.rect(self.screen, gradient_color, (x, y, fill_width, height))
 
         # Border
-        border_color = WHITE if not self.high_contrast else YELLOW
-        pygame.draw.rect(self.screen, border_color, (x, y, width, height), 2)
+        pygame.draw.rect(self.screen, WHITE, (x, y, width, height), 2)
 
         # Icon
         icon = self.icons['target']
@@ -759,7 +769,7 @@ class StealthGame:
 
         # Percentage
         percentage = int(progress * 100)
-        progress_text = self.font.render(f"{percentage}%", True, WHITE if not self.high_contrast else YELLOW)
+        progress_text = self.font.render(f"{percentage}%", True, WHITE)
         text_rect = progress_text.get_rect(center=(x + width//2, y + height//2))
         self.screen.blit(progress_text, text_rect)
 
@@ -797,6 +807,12 @@ class StealthGame:
             self.screen.blit(text_surf, text_rect)
 
     def draw_end_screen(self, message, color):
+        """
+        Draw the end screen (success or failure).
+        Args:
+            message (str): The main message to display.
+            color (Tuple[int,int,int]): The color of the message text.
+        """
         text = self.title_font.render(message, True, color)
         text_rect = text.get_rect(center=(WIDTH//2, HEIGHT//2 - 100))
         self.screen.blit(text, text_rect)
@@ -818,6 +834,9 @@ class StealthGame:
         self.buttons['menu'].draw(self.screen, self.font)
 
     def run(self):
+        """
+        Run the main game loop.
+        """
         while self.running:
             dt = self.clock.tick(FPS) / 1000.0
 
@@ -827,7 +846,7 @@ class StealthGame:
             self.update(dt)
             self.draw()
         
-        self.transition_manager.cleanup()
+        self.transition_manager.clear()
         
         if self.bg_cap:
             try:

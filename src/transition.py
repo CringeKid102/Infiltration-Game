@@ -1,7 +1,6 @@
 import pygame
-import cv2
 import os
-from typing import Optional, Callable, Union, Tuple, Dict, Any
+from typing import Optional, Callable, Dict, Any
 from enum import Enum
 
 class TransitionType(Enum):
@@ -30,7 +29,9 @@ class TransitionManager:
         Args:
             screen_width (int): Width of the screen.
             screen_height (int): Height of the screen.
-            speed (float): Speed of the transition.
+            default_speed (float): Speed of the transition.
+            video_speed_multiplier (float): Speed multiplier for video transitions.
+            video_loop (bool): Whether to loop video transitions.
         """
         self.width = screen_width
         self.height = screen_height
@@ -59,7 +60,7 @@ class TransitionManager:
         self.video_loop = video_loop
 
         # Animation easing
-        self.easing_functions = self._linear_ease
+        self.easing_function = self._linear_ease
 
     def start_transition(self, 
                      target_state: Any = None, 
@@ -221,6 +222,7 @@ class TransitionManager:
                 self._complete_transition()
                 result['completed'] = True
         
+        # Update any dynamic content (e.g., video frames)
         self._update_content()
 
         result['progress'] = self.progress
@@ -230,26 +232,27 @@ class TransitionManager:
         """
         Update content based on transition type and progress.
         """
-        if self.transition_type == TransitionType.FADE_COLOR:
+        if self.transition_type == TransitionType.FADE_VIDEO and self.video_cap is not None:
             try:
                 import cv2
 
-                for _ in range(self.video_speed_multiplier - 1):
+                steps = max(1, int(self.video_speed_multiplier))
+                for _ in range(steps - 1):
                     ret, _ = self.video_cap.read()
-                    if not ret and self.video_loop:
-                        self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    if not ret:
+                        if self.video_loop:
+                            self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         break
-                
                 ret, frame = self.video_cap.read()
-                if not ret and self.video_loop:
-                    self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
-                    ret, frame = self.video_cap.read()
-                
+                if not ret:
+                    if self.video_loop:
+                        self.video_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = self.video_cap.read()
                 if ret:
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    frame = cv2.resize(frame, (self.width, self.height))
-                    self.current_frame = pygame.surfarray.make_surface(frame).convert()
-            
+                    # Pygame expects (width, height) orientation; swap axes like elsewhere in project
+                    surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+                    self.current_frame = pygame.transform.scale(surf, (self.width, self.height)).convert()
             except Exception as e:
                 print(f"Error updating video frame: {e}")
         
@@ -435,57 +438,30 @@ class TransitionManager:
         else:  # WIPE_RIGHT
             width = int(self.width * wipe_progress)
             rect = pygame.Rect(self.width - width, 0, width, self.height)
-        
-        overlay = pygame.Surface((self.width, self.height))
-        overlay.fill(self.fade_color)
-        overlay.blit(overlay, rect.topleft)
-    
-    # Easing functions
+
+        if rect.width > 0:
+            overlay = pygame.Surface((rect.width, rect.height))
+            overlay.fill(self.fade_color)
+            overlay.set_alpha(alpha)
+            surface.blit(overlay, rect.topleft)
+
+    # EASING FUNCTIONS
     def _linear_ease(self, t: float) -> float:
-        """
-        Linear easing function.
-        Args:
-            t (float): Progress value (0.0 to 1.0).
-        Returns:
-            float: Eased progress value.
-        """
         return max(0.0, min(1.0, t))
 
-    def ease_in_ease(self, t: float) -> float:
-        """
-        Ease-in easing function.
-        Args:
-            t (float): Progress value (0.0 to 1.0).
-        Returns:
-            float: Eased progress value.
-        """
-        t = max(0.0, min(1.0, t))
+    def _ease_in_ease(self, t: float) -> float:
+        t = self._linear_ease(t)
         return t * t
 
-    def ease_out_ease(self, t: float) -> float:
-        """
-        Ease-out easing function.
-        Args:
-            t (float): Progress value (0.0 to 1.0).
-        Returns:
-            float: Eased progress value.
-        """
-        t = max(0.0, min(1.0, t))
+    def _ease_out_ease(self, t: float) -> float:
+        t = self._linear_ease(t)
         return 1 - (1 - t) * (1 - t)
-    
-    def ease_in_out_ease(self, t: float) -> float:
-        """
-        Ease-in-out easing function.
-        Args:
-            t (float): Progress value (0.0 to 1.0).
-        Returns:
-            float: Eased progress value.
-        """
-        t = max(0.0, min(1.0, t))
+
+    def _ease_in_out_ease(self, t: float) -> float:
+        t = self._linear_ease(t)
         if t < 0.5:
             return 2 * t * t
-        else:
-            return 1 - 2 * (1 - t) * (1 - t)
+        return 1 - pow(-2 * t + 2, 2) / 2
     
     # Utility functions
     def is_active(self) -> bool:
@@ -495,49 +471,10 @@ class TransitionManager:
             bool: True if active, False otherwise.
         """
         return self.active
-    
-    def get_progress(self) -> float:
-        """
-        Get the current progress of the transition.
-        Returns:
-            float: Progress value (0.0 to 1.0).
-        """
-        return self.progress
-    
-    def get_phase(self) -> str:
-        """
-        Get the current phase of the transition.
-        Returns:
-            str: Current phase ("in", "out", "complete").
-        """
-        return self.phase
 
-    def get_target_state(self) -> Any:
+    def clear(self):
         """
-        Get the target state of the transition.
-        Returns:
-            Any: Target state.
-        """
-        return self.target_state
-    
-    def cancel(self):
-        """
-        Cancel the current transition.
-        """
-        if self.active:
-            self._complete_transition()
-    
-    def set_speed(self, speed: float):
-        """
-        Change the speed of the transition.
-        Args:
-            speed (float): New speed value.
-        """
-        self.speed = speed
-    
-    def cleanup(self):
-        """
-        Cleanup resources used by the transition manager.
+        clear resources used by the transition manager.
         """
         if self.video_cap:
             try:

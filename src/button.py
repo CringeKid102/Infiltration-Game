@@ -5,6 +5,20 @@ from typing import Tuple, Optional
 class Button:
     def __init__(self, x: int, y: int, width: int, height: int, text: str, color: Tuple[int,int,int], hover_color: Tuple[int,int,int],
                  tooltip: str = "", icon: Optional[pygame.Surface] = None, hotkey: str = ""):
+        """
+        Initialize a button.
+        Args:
+            x (int): X position of the button.
+            y (int): Y position of the button.
+            width (int): Width of the button.
+            height (int): Height of the button.
+            text (str): Text to display on the button.
+            color (Tuple[int,int,int]): Normal color of the button.
+            hover_color (Tuple[int,int,int]): Color of the button when hovered.
+            tooltip (str, optional): Tooltip text to display on hover.
+            icon (Optional[pygame.Surface], optional): Icon to display on the button.
+            hotkey (str, optional): Hotkey text to display on the button.
+        """
         self.rect = pygame.Rect(x, y, width, height)
         self.text = text
         self.color = color
@@ -21,9 +35,15 @@ class Button:
         self.press_duration = 0.12
 
     def draw(self, screen: pygame.Surface, font: pygame.font.Font, show_tooltip: bool = False):
+        """
+        Draw the button on the screen.
+        Args:
+            screen (pygame.Surface): The surface to draw on.
+            font (pygame.font.Font): The font to use for text.
+            show_tooltip (bool): Whether to show the tooltip.
+        """
         draw_color = (100,100,100) if not self.active else tuple(
-            int(self.color[i] + (self.hover_color[i] - self.color[i]) * self.hover_t) for i in range(3)
-        )
+            int(self.color[i] + (self.hover_color[i] - self.color[i]) * self.hover_t) for i in range(3))
 
         w = int(self.rect.width * self.scale_t)
         h = int(self.rect.height * self.scale_t)
@@ -56,7 +76,12 @@ class Button:
             self._draw_tooltip(screen, font)
     
     def _draw_radial_cooldown(self, screen: pygame.Surface, rect: pygame.Rect):
-        """Draw radial cooldown indicator overlay"""
+        """
+        Draw radial cooldown indicator overlay
+        Args:
+            screen (pygame.Surface): The surface to draw on.
+            rect (pygame.Rect): The rectangle area of the button.
+        """
         progress = 1.0 - (self.cooldown / self.max_cooldown)
         center = rect.center
         radius = min(rect.width, rect.height) // 2 - 4
@@ -98,6 +123,9 @@ class Button:
     def _draw_tooltip(self, screen: pygame.Surface, font: pygame.font.Font):
         """
         Draw the tooltip near the button.
+        Args:
+            screen (pygame.Surface): The surface to draw on.
+            font (pygame.font.Font): The font to use for the tooltip text.
         """
         tooltip_font = pygame.font.Font(None, 20)
         tooltip_text = self.tooltip
@@ -129,6 +157,11 @@ class Button:
             y += line_height
 
     def update(self, dt: float):
+        """
+        Update the button's state.
+        Args:
+            dt (float): Delta time since last update.
+        """
         if self.cooldown > 0:
             self.cooldown -= dt
             self.active = False
@@ -155,6 +188,8 @@ class Button:
     def is_clicked(self, pos):
         """
         Check if the button is currently clicked.
+        Args:
+            pos (Tuple[int,int]): Position to check.
         """
         return self.rect.collidepoint(pos) and self.active
     
@@ -166,12 +201,17 @@ class Button:
         return self.rect.collidepoint(mouse_pos)
 
     def press(self):
+        """
+        Trigger the button press animation.
+        """
         self.press_timer = self.press_duration
         self.scale_t = max(0.0, self.scale_t * 0.92)
     
     def set_cooldown(self, cooldown_time: float):
         """
         Set the button's cooldown.
+        Args:
+            cooldown_time (float): Cooldown time in seconds.
         """
         self.cooldown = cooldown_time
         self.max_cooldown = cooldown_time

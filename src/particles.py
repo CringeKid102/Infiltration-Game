@@ -5,6 +5,9 @@ from typing import List, Dict, Tuple
 
 class ParticleSystem:
     def __init__(self):
+        """
+        Initialize the particle system.
+        """
         self.particles: List[Dict] = []
         self.float_texts: List[Dict] = []
         # Screen shake
@@ -13,6 +16,14 @@ class ParticleSystem:
         self.shake_duration = 0.0
 
     def spawn_sparks(self, x: float, y: float, count: int = 12, color: Tuple[int,int,int]=(255,200,100)):
+        """
+        Spawn spark particles.
+        Args:
+            x (float): X position to spawn sparks.
+            y (float): Y position to spawn sparks.
+            count (int): Number of sparks to spawn.
+            color (Tuple[int,int,int]): Color of the sparks.
+        """
         MAX = 500
         available = max(0, MAX - len(self.particles))
         to_spawn = min(count, available)
@@ -34,6 +45,13 @@ class ParticleSystem:
             })
 
     def spawn_smoke(self, x: float, y: float, count: int = 10):
+        """
+        Spawn smoke particles.
+        Args:
+            x (float): X position to spawn smoke.
+            y (float): Y position to spawn smoke.
+            count (int): Number of smoke particles to spawn.
+        """
         MAX = 500
         available = max(0, MAX - len(self.particles))
         to_spawn = min(count, available)
@@ -53,6 +71,13 @@ class ParticleSystem:
             })
 
     def add_detection_popup(self, delta: int, x: float, y: float):
+        """
+        Add a floating text popup for damage or healing.
+        Args:
+            delta (int): Amount of damage (negative) or healing (positive).
+            x (float): X position for the popup.
+            y (float): Y position for the popup.
+        """
         txt = f"{'+' if delta>0 else ''}{int(delta)}"
         col = (255,0,0) if delta > 0 else (0,255,0)
         self.float_texts.append({
@@ -67,6 +92,11 @@ class ParticleSystem:
         })
 
     def update(self, dt: float):
+        """
+        Update the particle system.
+        Args:
+            dt (float): Delta time since last update.
+        """
         for p in list(self.particles):
             p['x'] += p['vx'] * dt
             p['y'] += p['vy'] * dt
@@ -93,6 +123,11 @@ class ParticleSystem:
             self.shake_amount = max(0.0, self.shake_amount - 8.0 * dt)
 
     def draw_particles(self, surface: pygame.Surface):
+        """
+        Draw the particles on the given surface.
+        Args:
+            surface (pygame.Surface): The surface to draw on.
+        """
         for p in self.particles:
             life_frac = max(0.0, min(1.0, p['life'] / max(0.001, p.get('initial_life', p['life']))))
             alpha = int(255 * life_frac)
@@ -110,12 +145,21 @@ class ParticleSystem:
                 surface.blit(s, (int(p['x'])-r, int(p['y'])-r))
 
     def draw_float_texts(self, surface: pygame.Surface, font: pygame.font.Font):
+        """
+        Draw the floating text popups on the given surface.
+        Args:
+            surface (pygame.Surface): The surface to draw on.
+            font (pygame.font.Font): The font to use for the text.
+        """
         for ft in self.float_texts:
             txt_surf = font.render(ft['text'], True, ft['color'])
             txt_surf.set_alpha(ft.get('alpha', 255))
             surface.blit(txt_surf, (int(ft['x']), int(ft['y'])))
 
     def clear(self):
+        """
+        Clear all particles and floating texts.
+        """
         self.particles.clear()
         self.float_texts.clear()
         self.shake_amount = 0.0

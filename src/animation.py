@@ -46,7 +46,15 @@ class Animation:
         self._frame_cache: Dict[Tuple[int, int, bool, float], pygame.Surface] = {}
 
     def _extract_frame_surface(self, col: int, row: int, flip_x: bool) -> pygame.Surface:
-        """Extract a single frame surface from the spritesheet."""
+        """
+        Extract a single frame surface from the spritesheet.
+        Args:
+            col (int): Column number (0-based index)
+            row (int): Row number (0-based index)
+            flip_x (bool): Whether to flip the frame horizontally
+        Returns:
+            pygame.Surface: The extracted frame surface
+        """
         key = (col, row, flip_x, self.scale)
         if key in self._frame_cache:
             return self._frame_cache[key]
@@ -128,7 +136,13 @@ class Animation:
         }
         
     def set_animation(self, name: str, reset: bool = True, reverse: bool = False):
-        """Set the current animation if it's different from the current one."""
+        """
+        Set the current animation if it's different from the current one.
+        Args:
+            name (str): Name of the animation to set
+            reset (bool): Whether to reset to the first frame
+            reverse (bool): Whether to play the animation in reverse
+        """
         if name not in self.animations:
             raise KeyError(f"Animation not found: {name}")
         if name != self.current_animation or reset:
@@ -143,6 +157,8 @@ class Animation:
     def update(self, dt: float):
         """
         Advance animation by dt seconds. Call from your main loop with delta-time.
+        Args:
+            dt (float): Delta time since last update.
         """
         if not self.playing or self.current_animation is None or self.finished:
             return

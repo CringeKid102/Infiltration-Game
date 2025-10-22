@@ -4,6 +4,14 @@ from animation import Animation
 
 class Guard:
     def __init__(self, patrol_id: int, patrol_time: float, animation_set: Dict[str, Animation] = None, default_anim: str = "idle"):
+        """
+        Initialize a guard with patrol parameters.
+        Args:
+            patrol_id (int): Unique identifier for the guard.
+            patrol_time (float): Time taken to complete one patrol cycle.
+            animation_set (Dict[str, Animation], optional): Set of animations for the guard.
+            default_anim (str): Default animation name.
+        """
         self.id = patrol_id
         self.patrol_time = patrol_time
         self.current_time = 0.0
@@ -18,6 +26,11 @@ class Guard:
         self.anim_offset_y = 0
 
     def update(self, dt: float):
+        """
+        Update the guard's state.
+        Args:
+            dt (float): Delta time since last update.
+        """
         self.current_time += dt
         self.position = (self.current_time % self.patrol_time) / self.patrol_time
 
@@ -37,6 +50,15 @@ class Guard:
             anim.update(dt)
 
     def draw(self, screen: pygame.Surface, x: int, y: int, width: int, height: int):
+        """
+        Draw the guard on the screen.
+        Args:
+            screen (pygame.Surface): The surface to draw on.
+            x (int): X position of the patrol route.
+            y (int): Y position of the patrol route.
+            width (int): Width of the patrol route.
+            height (int): Height of the patrol route.
+        """
         route_rect = pygame.Rect(x, y, width, height)
 
         bg_color = (50, 50, 50) if self.alert and self.alert_flash else (100, 50, 50)
