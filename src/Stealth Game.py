@@ -299,6 +299,10 @@ class StealthGame:
             if event.type == pygame.QUIT:
                 self.running = False
             
+            # Settings menu gets priority for event handling
+            if self.settings_menu.handle_event(event):
+                continue
+            
             if event.type == pygame.KEYDOWN:
                 self._handle_keyboard(event.key)
 

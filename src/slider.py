@@ -26,7 +26,7 @@ class Slider:
 
     def handle_event(self, event):
         """Handle mouse events for the slider."""
-        if event.type == pygame.MOUSEBUTTONDOWN:
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self.handle_rect.collidepoint(event.pos):
                 self.dragging = True
             elif self.rect.collidepoint(event.pos):
@@ -37,12 +37,12 @@ class Slider:
                 self.update_handle_pos()
                 if self.callback:
                     self.callback(self.value)
-        elif event.type == pygame.MOUSEBUTTONUP:
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
             self.dragging = False
         elif event.type == pygame.MOUSEMOTION:
             if self.dragging:
                 rel_x = event.pos[0] - self.rect.x
-                progress = rel_x / (self.rect.width - self.handle_width)
+                progress = rel_x / self.rect.width
                 self.value = self.min_val + progress * (self.max_val - self.min_val)
                 self.value = max(self.min_val, min(self.value, self.max_val))
                 self.update_handle_pos()
@@ -58,5 +58,5 @@ class Slider:
         handle_color = (255, 255, 255) if not self.dragging else (200, 200, 200)
         pygame.draw.rect(surface, handle_color, self.handle_rect, border_radius=5)
         if self.label and font:
-            text = font.render(f"{self.label}: {self.value * 100}%", True, (255, 255, 255))
+            text = font.render(f"{self.label}: {int(self.value * 100)}%", True, (255, 255, 255))
             surface.blit(text, (self.rect.x, self.rect.y - 25))
