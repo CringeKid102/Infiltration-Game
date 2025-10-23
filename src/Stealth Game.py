@@ -8,6 +8,8 @@ from button import Button
 from guard import Guard
 from particles import ParticleSystem
 from transition import TransitionManager, TransitionType
+from audio import AudioManager
+from settings import SettingsMenu
 
 # Initialize Pygame
 pygame.init()
@@ -99,6 +101,10 @@ class StealthGame:
         # Initialize transition system
         self.transition_manager = TransitionManager(WIDTH, HEIGHT, 700)
         self.toasts = []
+
+        # Audio
+        self.audio_manager = AudioManager()
+        self.settings_menu = SettingsMenu(WIDTH, HEIGHT, self.audio_manager, Button)
     
     def _on_state_change(self, target_state: str):
         """
@@ -237,7 +243,8 @@ class StealthGame:
                            tooltip="Hack into the security system\nReduces detection by 25%\nCooldown: 10s",
                            icon=self.icons['hack'], hotkey="4"),
             'menu': Button(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50, "START MISSION", DARK_GREEN, GREEN),
-            'exit': Button(WIDTH//2 - 100, HEIGHT//2 + 170, 200, 50, "EXIT", RED, (255, 100, 100))
+            'exit': Button(WIDTH//2 - 100, HEIGHT//2 + 170, 200, 50, "EXIT", RED, (255, 100, 100)),
+            'settings': Button(WIDTH - 120, 20, 100, 40, "SETTINGS", DARK_GRAY, GRAY)
         }
 
     def add_toast(self, text: str, color, duration: float = 2.0):
@@ -300,6 +307,7 @@ class StealthGame:
 
                 if self.state == "menu":
                     if self.buttons['menu'].is_clicked(pos):
+                        self.audio_manager.play_sfx("button_click")
                         self.reset_game()
                         video_path = os.path.join(os.path.dirname(__file__), "..", "assets", "videos", "hacking bg.mp4")
                         self.transition_manager.start_transition(
@@ -311,10 +319,19 @@ class StealthGame:
                             video_speed=3
                         )
                     elif self.buttons['exit'].is_clicked(pos):
+                        self.audio_manager.play_sfx("button_click")
                         self.running = False
                     
+                    elif self.buttons['settings'].is_clicked(pos):
+                        self.audio_manager.play_sfx("button_click")
+                        self.settings_menu.show()
+                    
                 elif self.state == "playing":
-                    self._handle_game_clicks(pos)
+                    if self.buttons['settings'].is_clicked(pos):
+                        self.audio_manager.play_sfx("button_click")
+                        self.settings_menu.show()
+                    else:
+                        self._handle_game_clicks(pos)
                 
                 elif self.state in ["success", "failure"]:
                     if self.buttons['menu'].is_clicked(pos):
@@ -355,6 +372,7 @@ class StealthGame:
         """
         if self.buttons['camera'].is_clicked(pos):
             self.buttons['camera'].press()
+            self.audio_manager.play_sfx("camera_disable")
             self.camera_disabled = True
             self.camera_disable_time = 8
             self.buttons['camera'].set_cooldown(7)
@@ -369,6 +387,7 @@ class StealthGame:
 
         elif self.buttons['lights'].is_clicked(pos):
             self.buttons['lights'].press()
+            self.audio_manager.play_sfx("lights_cut")
             self.lights_disabled = True
             self.lights_disable_time = 6
             self.buttons['lights'].set_cooldown(5)
@@ -381,6 +400,7 @@ class StealthGame:
         
         elif self.buttons['distract'].is_clicked(pos):
             self.buttons['distract'].press()
+            self.audio_manager.play_sfx("distraction")
             # Clear all guard alerts
             for guard in self.guards:
                 guard.alert = False
@@ -394,6 +414,7 @@ class StealthGame:
         
         elif self.buttons['hack'].is_clicked(pos):
             self.buttons['hack'].press()
+            self.audio_manager.play_sfx("hack_attempt")
             # Success chance decreases with detection level
             success_chance = max(0.15, 1.0 - (self.detection_level / 80.0))
             if random.random() < success_chance:
@@ -429,6 +450,12 @@ class StealthGame:
         if transition_result['active']:
             return
         
+        self.settings_menu.update(dt)
+
+        if self.state == "menu":
+            if not self.audio_manager.is_music_playing():
+                self.audio_manager.play_music("menu_theme", loop=True)
+            return
         if self.state != "playing":
             return
 
@@ -617,6 +644,9 @@ class StealthGame:
 
         self.buttons['menu'].draw(self.screen, self.font)
         self.buttons['exit'].draw(self.screen, self.font)
+        self.buttons['settings'].draw(self.screen, self.small_font)
+
+        self.settings_menu.draw(self.screen, self.font)
 
     def draw_game(self):
         """
@@ -669,6 +699,9 @@ class StealthGame:
             self.buttons[key].draw(self.screen, self.small_font, show_tooltip)
 
         self.draw_toasts()
+
+        self.buttons['settings'].draw(self.screen, self.font)
+        self.settings_menu.draw(self.screen, self.font)
 
     def draw_status_bars(self, x, y, width, height, label, value, max_value, color, icon=None):
         """
