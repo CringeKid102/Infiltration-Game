@@ -236,7 +236,8 @@ class StealthGame:
             'hack': Button(start_x + 3 * spacing, button_y, button_width, button_height, "Hack System", DARK_GREEN, GREEN,
                            tooltip="Hack into the security system\nReduces detection by 25%\nCooldown: 10s",
                            icon=self.icons['hack'], hotkey="4"),
-            'menu': Button(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50, "START MISSION", DARK_GREEN, GREEN)
+            'menu': Button(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50, "START MISSION", DARK_GREEN, GREEN),
+            'exit': Button(WIDTH//2 - 100, HEIGHT//2 + 170, 200, 50, "EXIT", RED, (255, 100, 100))
         }
 
     def add_toast(self, text: str, color, duration: float = 2.0):
@@ -309,6 +310,8 @@ class StealthGame:
                             video_path=video_path,
                             video_speed=3
                         )
+                    elif self.buttons['exit'].is_clicked(pos):
+                        self.running = False
                     
                 elif self.state == "playing":
                     self._handle_game_clicks(pos)
@@ -323,6 +326,8 @@ class StealthGame:
                             state_change_callback=self._on_state_change,
                             color=(20, 20, 40)
                         )
+                    elif self.buttons['exit'].is_clicked(pos):
+                        self.running = False
 
     def _handle_keyboard(self, key):
         """
@@ -611,6 +616,7 @@ class StealthGame:
             y += 40
 
         self.buttons['menu'].draw(self.screen, self.font)
+        self.buttons['exit'].draw(self.screen, self.font)
 
     def draw_game(self):
         """
@@ -767,8 +773,10 @@ class StealthGame:
         icon_y = y + height//2 - icon.get_height()//2
         self.screen.blit(icon, (icon_x, icon_y))
 
-        # Percentage
-        percentage = int(progress * 100)
+        # Percentage - round to nearest multiple of objectives to avoid 19%, 39%, etc.
+        # Calculate based on actual completed objectives for clean percentages
+        actual_progress = self.objective_progress / self.objectives_needed
+        percentage = round(actual_progress * 100)
         progress_text = self.font.render(f"{percentage}%", True, WHITE)
         text_rect = progress_text.get_rect(center=(x + width//2, y + height//2))
         self.screen.blit(progress_text, text_rect)
@@ -832,6 +840,9 @@ class StealthGame:
         
         self.buttons['menu'].text = "RETURN TO MENU"
         self.buttons['menu'].draw(self.screen, self.font)
+        
+        self.buttons['exit'].rect.y = self.buttons['menu'].rect.y + 70
+        self.buttons['exit'].draw(self.screen, self.font)
 
     def run(self):
         """
