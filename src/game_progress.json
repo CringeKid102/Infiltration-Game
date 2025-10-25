@@ -1,0 +1,19 @@
+{
+  "audio_settings": {
+    "master": 1.0,
+    "music": 1.0,
+    "sfx": 1.0
+  },
+  "currency": 65,
+  "perks": {
+    "cooldown_reduction": 1.2,
+    "camera_disable_bonus": 9.0
+  },
+  "unlocked_perks": [
+    "camera_disable_bonus",
+    "cooldown_reduction"
+  ],
+  "best_objectives": 5,
+  "best_time": 37.55899999999913,
+  "difficulty": "normal"
+}

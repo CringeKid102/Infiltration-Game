@@ -1,5 +1,6 @@
 import pygame
 import os
+import json
 from slider import Slider
 
 class SettingsMenu:
@@ -30,6 +31,86 @@ class SettingsMenu:
 
         self.close_button = button_class(panel_x + panel_width - 80, panel_y + panel_height - 50,
                                          60, 30, "CLOSE", (100, 100, 100), (150, 150, 150))
+    
+        # Add save/load buttons
+        self.save_button = button_class(panel_x + 20, panel_y + panel_height - 50,
+                                       60, 30, "SAVE", (0, 100, 0), (0, 150, 0))
+        self.load_button = button_class(panel_x + 90, panel_y + panel_height - 50,
+                                       60, 30, "LOAD", (0, 0, 100), (0, 0, 150))
+        
+        # Save file path
+        self.save_path = os.path.join(os.path.dirname(__file__), "game_progress.json")
+        
+        # Reference to main game (will be set from outside)
+        self.game = None
+    
+    def save_progress(self):
+        """Save game progress including audio settings and game data."""
+        if not self.game:
+            return False
+        
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
+            
+            # Gather all data to save
+            save_data = {
+                'audio_settings': self.audio_manager.get_volumes(),
+                'currency': getattr(self.game, 'currency', 0),
+                'perks': getattr(self.game, 'perks', {}),
+                'unlocked_perks': list(getattr(self.game, 'unlocked_perks', set())),
+                'best_objectives': getattr(self.game, 'best_objectives', 0),
+                'best_time': getattr(self.game, 'best_time', 0),
+                'difficulty': getattr(self.game, 'difficulty', 'normal')
+            }
+            
+            with open(self.save_path, 'w') as f:
+                json.dump(save_data, f, indent=2)
+            
+            return True
+        except Exception as e:
+            print(f"Save failed: {e}")
+            return False
+    
+    def load_progress(self):
+        """Load game progress and apply audio settings and game data."""
+        if not self.game:
+            return False
+            
+        try:
+            if not os.path.exists(self.save_path):
+                return False
+                
+            with open(self.save_path, 'r') as f:
+                save_data = json.load(f)
+            
+            # Restore audio settings
+            audio_settings = save_data.get('audio_settings', {})
+            if 'master' in audio_settings:
+                self.audio_manager.set_master_volume(audio_settings['master'])
+            if 'music' in audio_settings:
+                self.audio_manager.set_music_volume(audio_settings['music'])
+            if 'sfx' in audio_settings:
+                self.audio_manager.set_sfx_volume(audio_settings['sfx'])
+            
+            # Restore game progress
+            self.game.currency = save_data.get('currency', 0)
+            self.game.perks = save_data.get('perks', {})
+            self.game.unlocked_perks = set(save_data.get('unlocked_perks', []))
+            self.game.best_objectives = save_data.get('best_objectives', 0)
+            self.game.best_time = save_data.get('best_time', 0)
+            self.game.difficulty = save_data.get('difficulty', 'normal')
+            
+            # Update slider positions to reflect loaded audio settings
+            volumes = self.audio_manager.get_volumes()
+            for key, slider in self.sliders.items():
+                slider.value = volumes[key]
+                slider.update_handle_pos()
+            
+            return True
+        except Exception as e:
+            print(f"Load failed: {e}")
+            return False
     
     def show(self):
         self.visible = True
@@ -67,6 +148,8 @@ class SettingsMenu:
         if self.visible:
             mouse_pos = pygame.mouse.get_pos()
             self.close_button.update(dt)
+            self.save_button.update(dt)
+            self.load_button.update(dt)
         
     def draw(self, screen, font):
         if not self.visible:
@@ -92,3 +175,16 @@ class SettingsMenu:
 
         # Draw close button
         self.close_button.draw(screen, font)
+        
+        # Draw save/load buttons
+        self.save_button.draw(screen, font)
+        self.load_button.draw(screen, font)
+        
+        # Draw progress info if game reference exists
+        if self.game:
+            info_y = self.panel_rect.y + 220
+            currency_text = font.render(f"Currency: {getattr(self.game, 'currency', 0)}", True, (255, 255, 255))
+            screen.blit(currency_text, (self.panel_rect.x + 20, info_y))
+            
+            best_text = font.render(f"Best: {getattr(self.game, 'best_objectives', 0)} objectives", True, (255, 255, 255))
+            screen.blit(best_text, (self.panel_rect.x + 180, info_y))

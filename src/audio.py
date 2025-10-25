@@ -20,31 +20,44 @@ class AudioManager:
         self.current_channel = 0
         self.sfx_sounds = {}
 
-        self.settings_file = os.path.join(os.path.dirname(__file__), "audio_settings.json")
+        self.settings_file = os.path.join(os.path.dirname(__file__), "game_progress.json")
         self.load_settings()
     
     def load_settings(self):
-        """Load audio settings from file."""
+        """Load audio settings from game progress file."""
         try:
             if os.path.exists(self.settings_file):
                 with open(self.settings_file, 'r') as f:
-                    settings = json.load(f)
-                    self.master_volume = settings.get("master_volume", 0.7)
-                    self.music_volume = settings.get("music_volume", 0.5)
-                    self.sfx_volume = settings.get("sfx_volume", 0.8)
+                    data = json.load(f)
+                    # Audio settings are nested under 'audio_settings' key
+                    audio_settings = data.get("audio_settings", {})
+                    self.master_volume = audio_settings.get("master", 0.7)
+                    self.music_volume = audio_settings.get("music", 0.5)
+                    self.sfx_volume = audio_settings.get("sfx", 0.8)
         except Exception as e:
             print(f"Error loading audio settings: {e}")
         
     def save_settings(self):
-        """Save audio settings to file."""
+        """Save audio settings to game progress file."""
         try:
-            settings = {
-                "master_volume": self.master_volume,
-                "music_volume": self.music_volume,
-                "sfx_volume": self.sfx_volume
+            # Load existing data if file exists
+            existing_data = {}
+            if os.path.exists(self.settings_file):
+                with open(self.settings_file, 'r') as f:
+                    existing_data = json.load(f)
+            
+            # Update only the audio_settings section
+            existing_data['audio_settings'] = {
+                "master": self.master_volume,
+                "music": self.music_volume,
+                "sfx": self.sfx_volume
             }
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.settings_file), exist_ok=True)
+            
             with open(self.settings_file, 'w') as f:
-                json.dump(settings, f, indent=2)
+                json.dump(existing_data, f, indent=2)
         except Exception as e:
             print(f"Error saving audio settings: {e}")
 

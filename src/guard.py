@@ -1,4 +1,5 @@
 import pygame
+import math
 from typing import Optional, Dict
 from animation import Animation
 
@@ -14,6 +15,14 @@ class Guard:
         """
         self.id = patrol_id
         self.patrol_time = patrol_time
+        
+        self.view_distance = 220
+        self.view_angle = 60
+        self.facing_angle = 0.0
+        
+        self.alert = False
+        self._alert_sound_played = False
+
         self.current_time = 0.0
         self.position = 0.0
         self.alert = False
@@ -81,3 +90,34 @@ class Guard:
         font = pygame.font.Font(None, 20)
         label = font.render(f"Guard {self.id}", True, (255,255,255))
         screen.blit(label, (x, y - 20))
+
+        if hasattr(self, 'game') and getattr(self.game, 'debug_draw', False):
+            self.draw_fov(screen, (x + width//2, y + height//2))
+        
+    def is_in_sight(self, point):
+        """Return True if the given point is within the guard's field of view."""
+        gx, gy = self.position
+        dx = point[0] - gx
+        dy = point[1] - gy
+        dist = math.hypot(dx, dy)
+        if dist > self.view_distance:
+            return False
+        angle_to_point = math.degrees(math.atan2(dy, dx))
+        diff = (angle_to_point - self.facing_angle + 360) % 360 - 180
+        return abs(diff) <= self.view_angle / 2
+
+    def draw_fov(self, screen, origin):
+        """Draw the guard's field of view for debugging."""
+        ox, oy = origin
+        start_angle = math.radians(self.facing_angle - self.view_angle / 2)
+        end_angle = math.radians(self.facing_angle + self.view_angle / 2)
+        points = [(ox, oy)]
+        steps = 12
+        for i in range(steps + 1):
+            a = start_angle + (end_angle - start_angle) * (i / steps)
+            x = ox + self.view_distance * math.cos(a)
+            y = oy + self.view_distance * math.sin(a)
+            points.append((x, y))
+        s = pygame.Surface(screen.get_width(), screen.get_height(), pygame.SRCALPHA)
+        pygame.draw.polygon(s, (255, 255, 0, 40), points)
+        screen.blit(s, (0, 0))

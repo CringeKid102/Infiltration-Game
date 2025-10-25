@@ -1,6 +1,7 @@
 import pygame
 import random
 import math
+import time
 import os
 import cv2
 from animation import Animation
@@ -58,6 +59,38 @@ class StealthGame:
         self.max_detection = 100
         self.objective_progress = 0
         self.objectives_needed = 5
+        self.secondary_objectives = []
+        
+        # Player upgrades and currency
+        self.perks = {
+            'cooldown_reduction': 0.0,
+            'camera_disable_bonus': 0.0,
+        }
+        self.unlocked_perks = set()
+        self.currency = 0
+        
+        # Statistics tracking
+        self.best_objectives = 0
+        self.best_time = 0
+        
+        self.debug_draw = False
+        self.upgrade_menu_open = False
+        self.show_quit_confirmation = False
+        
+        # Credit animation
+        self.credit_animation_timer = 0.0
+        self.credit_animation_amount = 0
+
+        # Difficulty settings
+        self.difficulty = 'normal'
+        self.difficulty_params = {
+            'easy': {'guards': 2, 'detection_rate': 0.8, 'patrol_randomness': 0.8},
+            'normal': {'guards': 3, 'detection_rate': 1.0, 'patrol_randomness': 1.0},
+            'hard': {'guards': 5, 'detection_rate': 1.3, 'patrol_randomness': 1.3},
+        }
+        self.available_difficulties = ['easy', 'normal', 'hard']
+        self.current_difficulty_index = self.available_difficulties.index(self.difficulty)
+        self.scale_params = self.difficulty_params.get(self.difficulty, self.difficulty_params['normal'])
 
         # Smooth animated values
         self.animated_time = self.mission_time
@@ -68,14 +101,21 @@ class StealthGame:
         self.camera_blink_time = 0.0
         self.camera_blink_active = False
 
-        self.guards = [
-            Guard(1, 8),
-            Guard(2, 12),
-            Guard(3, 10)
-        ]
+        num_guards = self.scale_params['guards']
+        self.guards = []
+        for i in range(num_guards):
+            patrol_time = int(8 + random.uniform(-2, 2) * self.scale_params['patrol_randomness'])
+            self.guards.append(Guard(i + 1, patrol_time))
         self.load_guard_animations()
 
         self.create_buttons()
+
+        # Hack charge state
+        self.hack_charging = False
+        self.hack_charge_time = 0.0
+        self.hack_charge_target = 3.0
+        self.hack_min_time = 0.4
+        self.hack_release_penalty = 0.0
 
         # System states
         self.camera_disabled = False
@@ -105,28 +145,59 @@ class StealthGame:
         # Audio
         self.audio_manager = AudioManager()
         try:
-            # List of sound names
-            sounds = [
-                'button_click',
-                'button_hover',
-                'alert_beep',
-                'footsteps',
-                'hack_success',
-                'hack_fail',
-                'camera_disable',
-                'lights_cut',
-                'distraction',
-                'system_startup',
-                'countdown_tick',
-                'mission_complete',
-                'mission_failed'
+            # Custom sound list for your game  
+            custom_sounds = [
+                'button_click', 'button_hover', 'alert_beep', 'footsteps',
+                'hack_success', 'hack_fail', 'camera_disable', 'lights_cut', 
+                'distraction', 'system_startup', 'countdown_tick',
+                'mission_complete', 'mission_failed'
             ]
-            self.audio_manager.load_sounds(sounds)
+            self.audio_manager.load_sounds(custom_sounds)
         except Exception as e:
             print(f"Error initializing AudioManager: {e}")
         
         # Settings menu
-        self.settings_menu = SettingsMenu(WIDTH, HEIGHT, self.audio_manager, Button)
+        try:
+            self.settings_menu = SettingsMenu(WIDTH, HEIGHT, self.audio_manager, Button)
+            self.settings_menu.game = self
+        except Exception as e:
+            print(f"Error initializing SettingsMenu: {e}")
+            self.settings_menu = None
+           
+        # Difficulty selection
+        self.difficulty_menu_open = False
+        self.available_difficulties = ['Easy', 'Normal', 'Hard']
+        self.current_difficulty_index = 1  # Default to Normal
+
+        # Auto-load progress on startup
+        if self.settings_menu:
+            self.settings_menu.load_progress()
+
+    def purchase_upgrade(self, key):
+        """
+        Purchase an upgrade/perk for the player.
+        Args:
+            key (str): The upgrade key to purchase.
+        Returns:
+            bool: True if purchase was successful, False otherwise.
+        """
+        costs = {'cooldown_reduction': 5, 'camera_disable_bonus': 8, 'detection_resistance': 12}
+        if self.currency >= costs.get(key, 999):
+            self.currency -= costs[key]
+            if key == 'cooldown_reduction':
+                self.perks['cooldown_reduction'] = self.perks.get('cooldown_reduction', 0) + 0.2
+                self.unlocked_perks.add('cooldown_reduction')
+            elif key == 'camera_disable_bonus':
+                self.perks['camera_disable_bonus'] = self.perks.get('camera_disable_bonus', 0) + 3.0
+                self.unlocked_perks.add('camera_disable_bonus')
+            elif key == 'detection_resistance':
+                self.perks['detection_resistance'] = self.perks.get('detection_resistance', 0) + 0.15
+                self.unlocked_perks.add('detection_resistance')
+            self.add_toast(f"Purchased {key}", GREEN, 2.0)
+            return True
+        else:
+            self.add_toast("Not enough credits", RED, 1.5)
+            return False
 
     def _on_state_change(self, target_state: str):
         """
@@ -135,6 +206,9 @@ class StealthGame:
             target_state (str): The state to switch to.
         """
         self.state = target_state
+        # Reset button text when transitioning to menu
+        if target_state == "menu":
+            self.buttons['menu'].text = "START MISSION"
  
     def create_icon(self, color, symbol):
         """
@@ -266,7 +340,10 @@ class StealthGame:
                            icon=self.icons['hack'], hotkey="4"),
             'menu': Button(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50, "START MISSION", DARK_GREEN, GREEN),
             'exit': Button(WIDTH//2 - 100, HEIGHT//2 + 170, 200, 50, "EXIT", RED, (255, 100, 100)),
-            'settings': Button(WIDTH - 120, 20, 100, 40, "SETTINGS", DARK_GRAY, GRAY)
+            'settings': Button(WIDTH - 120, 20, 100, 40, "SETTINGS", DARK_GRAY, GRAY),
+            'upgrades': Button(WIDTH - 240, 20, 100, 40, "UPGRADES", DARK_GRAY, GRAY),
+            'quit_game': Button(WIDTH - 230, 20, 100, 40, "QUIT", RED, (255, 100, 100)),
+            'difficulty': Button(WIDTH//2 - 100, HEIGHT//2 + 240, 200, 50, f"Difficulty: {self.available_difficulties[self.current_difficulty_index]}", DARK_GRAY, GRAY)
         }
 
     def add_toast(self, text: str, color, duration: float = 2.0):
@@ -283,6 +360,60 @@ class StealthGame:
             'time': duration,
             'duration': duration,
         })
+
+    def add_credit_animation(self, amount: int):
+        """
+        Start credit gain animation.
+        Args:
+            amount (int): Amount of credits gained.
+        """
+        self.credit_animation_timer = 2.0  # 2 seconds
+        self.credit_animation_amount = amount
+
+    def draw_quit_confirmation(self):
+        """Draw quit confirmation dialog."""
+        # Background overlay
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+        
+        # Dialog panel
+        panel_width, panel_height = 400, 200
+        panel_x = (WIDTH - panel_width) // 2
+        panel_y = (HEIGHT - panel_height) // 2
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        
+        pygame.draw.rect(self.screen, (60, 60, 80), panel_rect, border_radius=10)
+        pygame.draw.rect(self.screen, RED, panel_rect, 3, border_radius=10)
+        
+        # Warning text
+        warning_text = self.font.render("WARNING!", True, RED)
+        warning_rect = warning_text.get_rect(center=(panel_x + panel_width//2, panel_y + 40))
+        self.screen.blit(warning_text, warning_rect)
+        
+        # Message
+        msg1 = self.small_font.render("If you quit now, you will lose", True, WHITE)
+        msg2 = self.small_font.render(f"all {self.currency} credits!", True, YELLOW)
+        msg3 = self.small_font.render("Are you sure?", True, WHITE)
+        
+        msg1_rect = msg1.get_rect(center=(panel_x + panel_width//2, panel_y + 80))
+        msg2_rect = msg2.get_rect(center=(panel_x + panel_width//2, panel_y + 100))
+        msg3_rect = msg3.get_rect(center=(panel_x + panel_width//2, panel_y + 120))
+        
+        self.screen.blit(msg1, msg1_rect)
+        self.screen.blit(msg2, msg2_rect)
+        self.screen.blit(msg3, msg3_rect)
+        
+        # Buttons
+        yes_btn = Button(panel_x + 50, panel_y + 150, 100, 30, "YES, QUIT", RED, (255, 100, 100))
+        no_btn = Button(panel_x + 250, panel_y + 150, 100, 30, "NO, STAY", GREEN, (100, 255, 100))
+        
+        yes_btn.draw(self.screen, self.small_font)
+        no_btn.draw(self.screen, self.small_font)
+        
+        # Store button references for event handling
+        self.quit_yes_btn = yes_btn
+        self.quit_no_btn = no_btn
 
     def reset_game(self):
         """
@@ -309,6 +440,8 @@ class StealthGame:
             guard.current_time = random.uniform(0, guard.patrol_time)
         
         self.create_buttons()
+        # Reset menu button text when returning to menu
+        self.buttons['menu'].text = "START MISSION"
         self.particle_sys.clear()
         self.toasts.clear()
         self.feedback_messages.clear()
@@ -352,15 +485,53 @@ class StealthGame:
                         self.audio_manager.play_sfx("button_click")
                         self.settings_menu.show()
                     
+                    elif self.buttons['upgrades'].is_clicked(pos):
+                        self.audio_manager.play_sfx("button_click")
+                        if self.upgrade_menu_open:
+                            self.upgrade_menu_open = False
+                        else:
+                            self.upgrade_menu_open = True
+                           
+                    elif self.buttons['difficulty'].is_clicked(pos):
+                        self.audio_manager.play_sfx("button_click")
+                        # Cycle through difficulties
+                        self.current_difficulty_index = (self.current_difficulty_index + 1) % len(self.available_difficulties)
+                        difficulty_name = self.available_difficulties[self.current_difficulty_index]
+                        self.buttons['difficulty'].text = f"Difficulty: {difficulty_name}"
+                        
+                        # Apply difficulty settings
+                        if difficulty_name == 'Easy':
+                            self.scale_params = {'guards': 2, 'detection_rate': 0.7, 'patrol_randomness': 0.8}
+                        elif difficulty_name == 'Normal':
+                            self.scale_params = {'guards': 3, 'detection_rate': 1.0, 'patrol_randomness': 1.0}
+                        elif difficulty_name == 'Hard':
+                            self.scale_params = {'guards': 4, 'detection_rate': 1.4, 'patrol_randomness': 1.2}
+                    
                 elif self.state == "playing":
-                    if self.buttons['settings'].is_clicked(pos):
+                    if self.show_quit_confirmation:
+                        # Handle quit confirmation dialog clicks
+                        if hasattr(self, 'quit_yes_btn') and self.quit_yes_btn.is_clicked(pos):
+                            # Reset currency and return to menu
+                            self.currency = 0
+                            self.show_quit_confirmation = False
+                            self.reset_game()
+                            self.state = "menu"
+                        elif hasattr(self, 'quit_no_btn') and self.quit_no_btn.is_clicked(pos):
+                            # Cancel quit
+                            self.show_quit_confirmation = False
+                    elif self.buttons['settings'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
                         self.settings_menu.show()
+                    elif self.buttons['quit_game'].is_clicked(pos):
+                        self.audio_manager.play_sfx("button_click")
+                        self.show_quit_confirmation = True
                     else:
                         self._handle_game_clicks(pos)
                 
                 elif self.state in ["success", "failure"]:
                     if self.buttons['menu'].is_clicked(pos):
+                        # Reset button text before transitioning
+                        self.buttons['menu'].text = "START MISSION"
                         self.reset_game()
                         self.transition_manager.start_transition(
                             target_state="menu",
@@ -371,6 +542,37 @@ class StealthGame:
                         )
                     elif self.buttons['exit'].is_clicked(pos):
                         self.running = False
+            
+            elif event.type == pygame.MOUSEBUTTONUP:
+                if self.hack_charging:
+                    self.hack_charging = False
+                    charge = max(self.hack_min_time, min(self.hack_charge_time, self.hack_charge_target))
+                    progress_gain = int(1 + (charge / self.hack_charge_target) * 3)
+                    detection_increase = int(5 + (charge / self.hack_charge_target) * 30)
+                    base_success = max(0.2, 0.9 - (self.detection_level / 120.0))
+                    success_modifier = (charge / self.hack_charge_target) * 0.15
+                    success_chance = min(0.98, base_success + success_modifier)
+                    
+                    if random.random() <= success_chance:
+                        self.objective_progress += progress_gain
+                        self.detection_level = max(0, self.detection_level + (detection_increase * 0.2))
+                        self.add_toast(f"HACK SUCCESS +{progress_gain}", GREEN, 2.5)
+                        # Set cooldown based on success (shorter cooldown for success)
+                        cooldown_time = 3.0 - self.perks.get('cooldown_reduction', 0.0)
+                        self.buttons['hack'].set_cooldown(max(1.0, cooldown_time))
+                        if self.audio_manager:
+                            self.audio_manager.play_sfx('hack_success')
+                    else:
+                        # fail (bigger penalty)
+                        self.detection_level = min(self.max_detection, self.detection_level + detection_increase)
+                        self.add_toast(f"HACK FAILED +{detection_increase}%", RED, 2.5)
+                        # Longer cooldown for failure
+                        cooldown_time = 5.0 - self.perks.get('cooldown_reduction', 0.0)
+                        self.buttons['hack'].set_cooldown(max(2.0, cooldown_time))
+                        if self.audio_manager:
+                            self.audio_manager.play_sfx('hack_fail')
+                    
+                    self.audio_manager.unduck_music()
 
     def _handle_keyboard(self, key):
         """
@@ -390,18 +592,48 @@ class StealthGame:
             if button_key and self.buttons[button_key].active:
                 self._handle_game_clicks(self.buttons[button_key].rect.center)
 
+        # upgrade shortcuts when upgrade menu open
+        if self.upgrade_menu_open:
+            if key == pygame.K_1:
+                self.purchase_upgrade('cooldown_reduction')
+            elif key == pygame.K_2:
+                self.purchase_upgrade('camera_disable_bonus')
+            elif key == pygame.K_3:
+                self.purchase_upgrade('detection_resistance')
+            elif key == pygame.K_ESCAPE:
+                self.upgrade_menu_open = False
+            return
+
     def _handle_game_clicks(self, pos):
         """
-        Handle clicks on game action buttons.
+        Handle clicks on game action buttons and secondary objectives.
         Args:
             pos (Tuple[int, int]): The position of the mouse click.
         """
+        # Check for secondary objective clicks first
+        for so in list(self.secondary_objectives):
+            if not so['active']:
+                continue
+            distance = math.sqrt((pos[0] - so['x'])**2 + (pos[1] - so['y'])**2)
+            if distance <= 20:  # Click radius
+                # Add credits directly with animation
+                self.currency += so['reward']
+                self.add_credit_animation(so['reward'])
+                self.secondary_objectives.remove(so)
+                self.audio_manager.play_sfx("coin_collect")
+                return
         if self.buttons['camera'].is_clicked(pos):
             self.buttons['camera'].press()
             self.audio_manager.play_sfx("camera_disable")
             self.camera_disabled = True
-            self.camera_disable_time = 8
-            self.buttons['camera'].set_cooldown(7)
+            # Apply camera disable bonus from perks
+            base_time = 8
+            bonus_time = self.perks.get('camera_disable_bonus', 0.0)
+            self.camera_disable_time = base_time + bonus_time
+            # Apply cooldown reduction from perks
+            base_cooldown = 7
+            cooldown_reduction = self.perks.get('cooldown_reduction', 0.0)
+            self.buttons['camera'].set_cooldown(max(1.0, base_cooldown - cooldown_reduction))
             self.add_toast("Cameras Disabled", BLUE, 2.0)
             self.camera_blink_time = 0.5
             self.camera_blink_active = True
@@ -416,7 +648,10 @@ class StealthGame:
             self.audio_manager.play_sfx("lights_cut")
             self.lights_disabled = True
             self.lights_disable_time = 6
-            self.buttons['lights'].set_cooldown(5)
+            # Apply cooldown reduction from perks
+            base_cooldown = 5
+            cooldown_reduction = self.perks.get('cooldown_reduction', 0.0)
+            self.buttons['lights'].set_cooldown(max(1.0, base_cooldown - cooldown_reduction))
             self.add_toast("Lights Cut", BLUE, 2.0)
             delta = -10
             self.detection_level = max(0, self.detection_level + delta)
@@ -435,36 +670,24 @@ class StealthGame:
             dx, dy = self.buttons['distract'].rect.center
             self.particle_sys.spawn_smoke(dx, dy, count=14)
             self.particle_sys.add_detection_popup(delta, dx, dy)
-            self.buttons['distract'].set_cooldown(10)
+            # Apply cooldown reduction from perks
+            base_cooldown = 10
+            cooldown_reduction = self.perks.get('cooldown_reduction', 0.0)
+            self.buttons['distract'].set_cooldown(max(1.0, base_cooldown - cooldown_reduction))
             self.add_toast("Distraction Created", BLUE, 2.0)
         
         elif self.buttons['hack'].is_clicked(pos):
+            # Check if hack button is on cooldown
+            if self.buttons['hack'].cooldown > 0:
+                return
+               
+            # Start hack charge (hold to charge in update loop)
             self.buttons['hack'].press()
-            self.audio_manager.play_sfx("hack_attempt")
-            # Success chance decreases with detection level
-            success_chance = max(0.15, 1.0 - (self.detection_level / 80.0))
-            if random.random() < success_chance:
-                self.objective_progress += 1
-                delta = -5
-                self.detection_level = max(0, self.detection_level + delta)
-                self.buttons['hack'].set_cooldown(2.0)
-                self.add_toast(f"HACK SUCCESSFUL! ({self.objective_progress}/{self.objectives_needed})", GREEN, 2.5)
-                self.feedback_messages.append({'text': "HACK SUCCESSFUL", 'color': GREEN, 'time': 2.5})
-                hx, hy = WIDTH//2, 220
-                self.particle_sys.spawn_sparks(hx, hy, count=18, color=(255,220,120))
-                self.particle_sys.add_detection_popup(delta, hx, hy)
-                self.particle_sys.start_shake(3.0, 0.25)
-            else:
-                penalty = min(20, int(8 + self.detection_level * 0.05))
-                self.detection_level += penalty
-                self.buttons['hack'].set_cooldown(3.5)
-                self.add_toast(f"HACK FAILED! +{penalty}% detection", RED, 2.5)
-                self.feedback_messages.append({'text': "HACK FAILED", 'color': RED, 'time': 2.5})
-                hx, hy = WIDTH//2, 220
-                self.particle_sys.spawn_sparks(hx, hy, count=26, color=(255,80,60))
-                self.particle_sys.add_detection_popup(+penalty, hx, hy)
-                self.particle_sys.start_shake(8.0, 0.4)
-
+            self.hack_charging = True
+            self.hack_charge_time = 0.0
+            self.audio_manager.duck_music(0.3)
+            self.audio_manager.play_sfx("system_startup")
+            
     def update(self, dt):
         """
         Update the game state.
@@ -476,7 +699,8 @@ class StealthGame:
         if transition_result['active']:
             return
         
-        self.settings_menu.update(dt)
+        if self.settings_menu:
+            self.settings_menu.update(dt)
 
         if self.state == "menu":
             if not self.audio_manager.is_music_playing():
@@ -485,8 +709,33 @@ class StealthGame:
         if self.state != "playing":
             return
 
+        # Update timers
         self.time_remaining -= dt
         self.ui_time += dt
+        
+        # Update hack charging timer
+        if getattr(self, "hack_charging", False):
+            self.hack_charge_time += dt
+            if self.hack_charge_time > self.hack_charge_target:
+                self.hack_charge_time = self.hack_charge_target
+        
+        if random.random() < 0.02 * (1.0 if self.state == 'playing' else 0.0):
+            sx = random.randint(200, WIDTH - 200)
+            sy = random.randint(200, 350)
+            obj = {'id': f'so{int(time.time())}', 'x': sx, 'y': sy, 'reward': random.randint(1,3), 
+                   'time_left': random.uniform(15, 30), 'active': True}
+            self.secondary_objectives.append(obj)
+        
+        for so in list(self.secondary_objectives):
+            so['time_left'] -= dt
+            if so['time_left'] <= 0:
+                self.secondary_objectives.remove(so)
+
+        # Update credit animation
+        if self.credit_animation_timer > 0:
+            self.credit_animation_timer -= dt
+            if self.credit_animation_timer <= 0:
+                self.credit_animation_amount = 0
 
         # Smooth interpolation for animated values
         lerp = lambda a, b, t: a + (b - a) * min(1.0, t)
@@ -570,6 +819,16 @@ class StealthGame:
         # Check win/loss conditions
         self.detection_level = max(0, min(self.detection_level, self.max_detection))
         if self.objective_progress >= self.objectives_needed:
+            # Update best scores
+            if self.objective_progress > self.best_objectives:
+                self.best_objectives = self.objective_progress
+            if self.time_remaining > self.best_time:
+                self.best_time = self.time_remaining
+            
+            # Auto-save progress
+            if hasattr(self, 'settings_menu') and self.settings_menu:
+                self.settings_menu.save_progress()
+            
             self.state = "success"
             self.particle_sys.clear()
         elif self.detection_level >= self.max_detection or self.time_remaining <= 0:
@@ -670,25 +929,58 @@ class StealthGame:
 
         self.buttons['menu'].draw(self.screen, self.font)
         self.buttons['exit'].draw(self.screen, self.font)
-        self.buttons['settings'].draw(self.screen, self.small_font)
+        self.buttons['settings'].draw(self.screen, self.font)
+        self.buttons['upgrades'].draw(self.screen, self.font)
+        self.buttons['difficulty'].draw(self.screen, self.font)
 
-        self.settings_menu.draw(self.screen, self.font)
+        # Draw upgrade menu
+        self.draw_upgrade_menu()
+        
+        if self.settings_menu:
+            self.settings_menu.draw(self.screen, self.font)
 
     def draw_game(self):
         """
         Draw the main game UI.
         """
+        # Draw title
         title = self.title_font.render("SECURITY TERMINAL", True, GREEN)
         self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 20))
 
+        # Draw status bars
         self.draw_status_bars(25, 90, 300, 30, "TIME", self.animated_time, self.mission_time, BLUE, self.icons['clock'])
         self.draw_status_bars(WIDTH - 325, 90, 300, 30, "DETECTION", self.animated_detection, self.max_detection, RED, self.icons['radar'])
         self.draw_mission_progress(WIDTH//2 - 150, 90, 300, 30)
+        
+        # Draw currency with animation (moved to top-right to avoid guards)
+        if self.credit_animation_timer > 0:
+            # Show animated credit gain
+            base_text = f"Credits: {self.currency - self.credit_animation_amount}"
+            anim_text = f" +{self.credit_animation_amount}"
+            final_text = f" → {self.currency}"
+            
+            base_surf = self.small_font.render(base_text, True, YELLOW)
+            anim_surf = self.small_font.render(anim_text, True, GREEN)
+            final_surf = self.small_font.render(final_text, True, YELLOW)
+            
+            total_width = base_surf.get_width() + anim_surf.get_width() + final_surf.get_width()
+            start_x = WIDTH - total_width - 20
+            
+            self.screen.blit(base_surf, (start_x, 60))
+            self.screen.blit(anim_surf, (start_x + base_surf.get_width(), 60))
+            self.screen.blit(final_surf, (start_x + base_surf.get_width() + anim_surf.get_width(), 60))
+        else:
+            currency_text = self.small_font.render(f"Credits: {self.currency}", True, YELLOW)
+            self.screen.blit(currency_text, (WIDTH - currency_text.get_width() - 20, 60))
+        
+        # Draw current difficulty (moved below credits)
+        difficulty_text = self.small_font.render(f"Difficulty: {self.difficulty.capitalize()}", True, WHITE)
+        self.screen.blit(difficulty_text, (WIDTH - difficulty_text.get_width() - 20, 130))
 
         # Show feedback messages
         for i, msg in enumerate(self.feedback_messages):
             txt = self.font.render(msg['text'], True, msg['color'])
-            txt_rect = txt.get_rect(center=(WIDTH//2, 130 + i * 30))
+            txt_rect = txt.get_rect(center=(WIDTH//2, 160 + i * 30))
             self.screen.blit(txt, txt_rect)
 
         # Draw guard monitors
@@ -704,6 +996,7 @@ class StealthGame:
             ("LIGHTS", "OFFLINE" if self.lights_disabled else "ONLINE", GREEN if self.lights_disabled else RED)
         ]
 
+        # Draw system statuses
         for i, sys_data in enumerate(systems):
             name = sys_data[0]
             status = sys_data[1]
@@ -720,14 +1013,44 @@ class StealthGame:
             event_text = self.small_font.render(f"! {ev_text}", True, YELLOW)
             self.screen.blit(event_text, (WIDTH//2 - event_text.get_width()//2, 390))
 
+        # Draw action buttons
         for key in ['camera', 'lights', 'distract', 'hack']:
             show_tooltip = self.buttons[key].is_hovered()
             self.buttons[key].draw(self.screen, self.small_font, show_tooltip)
 
+        # Draw upgrade shop
+        self.draw_upgrade_menu()
+
+        # Draw secondary objectives
+        for so in self.secondary_objectives:
+            if not so['active']:
+                continue
+            # Make objectives more visible with pulsing effect
+            pulse = abs(math.sin(time.time() * 3)) * 0.3 + 0.7
+            radius = int(20 * pulse)
+            # Draw outer glow
+            pygame.draw.circle(self.screen, (255, 255, 0, 100), (so['x'], so['y']), radius + 5)
+            # Draw main circle
+            pygame.draw.circle(self.screen, YELLOW, (so['x'], so['y']), radius)
+            # Draw border
+            pygame.draw.circle(self.screen, WHITE, (so['x'], so['y']), radius, 2)
+            # Draw text
+            txt = self.font.render(f"+{so['reward']}", True, BLACK)
+            self.screen.blit(txt, (so['x'] - txt.get_width()//2, so['y'] - txt.get_height()//2))
+
+        # Draw toasts
         self.draw_toasts()
 
+        # Draw settings and quit buttons during gameplay
         self.buttons['settings'].draw(self.screen, self.font)
-        self.settings_menu.draw(self.screen, self.font)
+        self.buttons['quit_game'].draw(self.screen, self.font)
+        
+        if self.settings_menu:
+            self.settings_menu.draw(self.screen, self.font)
+        
+        # Draw quit confirmation dialog
+        if self.show_quit_confirmation:
+            self.draw_quit_confirmation()
 
     def draw_status_bars(self, x, y, width, height, label, value, max_value, color, icon=None):
         """
@@ -902,6 +1225,97 @@ class StealthGame:
         
         self.buttons['exit'].rect.y = self.buttons['menu'].rect.y + 70
         self.buttons['exit'].draw(self.screen, self.font)
+
+    def draw_upgrade_menu(self):
+        """Draw the upgrade/perks shop menu."""
+        if not self.upgrade_menu_open:
+            return
+            
+        # Background overlay
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+        
+        # Shop panel
+        panel_width, panel_height = 500, 400
+        panel_x = (WIDTH - panel_width) // 2
+        panel_y = (HEIGHT - panel_height) // 2
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        
+        pygame.draw.rect(self.screen, (40, 40, 60), panel_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (120, 120, 120), panel_rect, 3, border_radius=10)
+        
+        # Title
+        title = self.title_font.render("UPGRADE SHOP", True, GREEN)
+        title_rect = title.get_rect(center=(panel_x + panel_width//2, panel_y + 30))
+        self.screen.blit(title, title_rect)
+        
+        # Currency display
+        currency_text = self.font.render(f"Credits: {self.currency}", True, YELLOW)
+        self.screen.blit(currency_text, (panel_x + 20, panel_y + 60))
+        
+        # Upgrade options
+        upgrade_y = panel_y + 100
+        upgrades = [
+            {
+                'name': 'Faster Cooldowns',
+                'description': 'Reduce all cooldowns by 20%',
+                'cost': 5,
+                'key': 'cooldown_reduction',
+                'current': f"{int(self.perks.get('cooldown_reduction', 0) * 100)}%"
+            },
+            {
+                'name': 'Extended Camera Disable',
+                'description': 'Camera disable lasts 3s longer',
+                'cost': 8,
+                'key': 'camera_disable_bonus',
+                'current': f"+{int(self.perks.get('camera_disable_bonus', 0))}s"
+            },
+            {
+                'name': 'Detection Shield',
+                'description': 'Reduce detection gain by 15%',
+                'cost': 12,
+                'key': 'detection_resistance',
+                'current': f"{int(self.perks.get('detection_resistance', 0) * 100)}%"
+            }
+        ]
+        
+        for i, upgrade in enumerate(upgrades):
+            y_pos = upgrade_y + i * 80
+            
+            # Upgrade box
+            upgrade_rect = pygame.Rect(panel_x + 20, y_pos, panel_width - 40, 70)
+            color = (0, 80, 0) if self.currency >= upgrade['cost'] else (80, 40, 40)
+            pygame.draw.rect(self.screen, color, upgrade_rect, border_radius=5)
+            pygame.draw.rect(self.screen, WHITE, upgrade_rect, 2, border_radius=5)
+            
+            # Upgrade info
+            name_text = self.font.render(upgrade['name'], True, WHITE)
+            desc_text = self.small_font.render(upgrade['description'], True, (200, 200, 200))
+            cost_text = self.small_font.render(f"Cost: {upgrade['cost']} credits", True, YELLOW)
+            current_text = self.small_font.render(f"Current: {upgrade['current']}", True, GREEN)
+            
+            self.screen.blit(name_text, (upgrade_rect.x + 10, upgrade_rect.y + 5))
+            self.screen.blit(desc_text, (upgrade_rect.x + 10, upgrade_rect.y + 25))
+            self.screen.blit(cost_text, (upgrade_rect.x + 10, upgrade_rect.y + 45))
+            self.screen.blit(current_text, (upgrade_rect.x + 200, upgrade_rect.y + 45))
+            
+            # Buy button (number key)
+            key_text = self.font.render(f"[{i+1}]", True, WHITE)
+            self.screen.blit(key_text, (upgrade_rect.right - 40, upgrade_rect.y + 20))
+        
+        # Instructions
+        instructions = [
+            "Press 1-3 to purchase upgrades",
+            "Press ESC or click Upgrades again to close"
+        ]
+        
+        inst_y = panel_y + panel_height - 50
+        for instruction in instructions:
+            inst_text = self.small_font.render(instruction, True, (180, 180, 180))
+            inst_rect = inst_text.get_rect(center=(panel_x + panel_width//2, inst_y))
+            self.screen.blit(inst_text, inst_rect)
+            inst_y += 20
 
     def run(self):
         """
