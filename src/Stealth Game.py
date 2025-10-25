@@ -104,8 +104,30 @@ class StealthGame:
 
         # Audio
         self.audio_manager = AudioManager()
+        try:
+            # List of sound names
+            sounds = [
+                'button_click',
+                'button_hover',
+                'alert_beep',
+                'footsteps',
+                'hack_success',
+                'hack_fail',
+                'camera_disable',
+                'lights_cut',
+                'distraction',
+                'system_startup',
+                'countdown_tick',
+                'mission_complete',
+                'mission_failed'
+            ]
+            self.audio_manager.load_sounds(sounds)
+        except Exception as e:
+            print(f"Error initializing AudioManager: {e}")
+        
+        # Settings menu
         self.settings_menu = SettingsMenu(WIDTH, HEIGHT, self.audio_manager, Button)
-    
+
     def _on_state_change(self, target_state: str):
         """
         Called when transition reaches midpoint to change game state.

@@ -1,7 +1,6 @@
 import pygame
 import os
 import json
-import numpy as np
 from typing import Dict, Optional
 
 class AudioManager:
@@ -23,7 +22,6 @@ class AudioManager:
 
         self.settings_file = os.path.join(os.path.dirname(__file__), "audio_settings.json")
         self.load_settings()
-        self.load_sounds()
     
     def load_settings(self):
         """Load audio settings from file."""
@@ -50,57 +48,26 @@ class AudioManager:
         except Exception as e:
             print(f"Error saving audio settings: {e}")
 
-    def _generate_tone(self, frequency, duration, volume=0.5):
-        """Generate a simple tone sound."""
-        sample_rate = 44100
-        frames = int(sample_rate * duration)
-        arr = np.zeros((frames, 2))
-
-        for i in range(frames):
-            t = i / sample_rate
-            wave = np.sin(2 * np.pi * frequency * t) * volume
-            if i < 1000:
-                wave *= i / 1000
-            elif i > frames - 1000:
-                wave *= (frames - i) / 1000
-            arr[i] = [wave, wave]
-        
-        arr = (arr * 32767).astype(np.int16)
-        return pygame.mixer.Sound(arr)
-
-    def load_sounds(self):
+    def load_sounds(self, sounds):
         """Load sound effects from the audio directory."""
         sfx_dir = os.path.join(self.audio_dir, "sfx")
+        os.makedirs(sfx_dir, exist_ok=True)
 
-        # Generate sounds
-        sounds = {
-             'button_click': (800, 0.1, 0.3),
-             'button_hover': (600, 0.05, 0.2),
-             'alert_beep': (1000, 0.2, 0.4),
-             'footsteps': (200, 0.1, 0.3),
-             'hack_success': (523, 0.3, 0.5),
-             'hack_fail': (200, 0.4, 0.4),
-             'camera_disable': (800, 0.3, 0.4),
-             'lights_cut': (400, 0.2, 0.3),
-             'distraction': (440, 0.2, 0.4),
-             'system_startup': (400, 0.5, 0.3),
-             'countdown_tick': (1200, 0.05, 0.3),
-             'mission_complete': (659, 0.8, 0.6),
-             'mission_failed': (150, 1.0, 0.5)
-         }
-
-        for name, (freq, dur, vol) in sounds.items():
+        for sound in sounds.items():
+            sound_loaded = False
             for ext in ['.wav', '.ogg', '.mp3']:
-                file_path = os.path.join(sfx_dir, f"{name}{ext}")
+                file_path = os.path.join(sfx_dir, f"{sound}{ext}")
                 if os.path.exists(file_path):
                     try:
-                        self.sfx_sounds[name] = pygame.mixer.Sound(file_path)
+                        self.sfx_sounds[sound] = pygame.mixer.Sound(file_path)
+                        print(f"Loaded sound: {sound}{ext}")
+                        sound_loaded = True
                         break
                     except Exception as e:
-                        print(f"Error loading sound {name}: {e}")
+                        print(f"Error loading sound {sound}: {e}")
                         continue
-            else:
-                self.sfx_sounds[name] = self._generate_tone(freq, dur, vol)
+            if not sound_loaded:
+                print(f"Warning: Sound {sound} not found")
 
     def play_sfx(self, sound_name, volume_override=None):
         """Play a sound effect"""
@@ -125,6 +92,7 @@ class AudioManager:
     def play_music(self, music_name, loop=True, fade_in=0):
         """Play background music."""
         music_dir = os.path.join(self.audio_dir, "music")
+        os.makedirs(music_dir, exist_ok=True)
 
         for ext in ['.mp3', '.ogg', '.wav']:
             music_path = os.path.join(music_dir, f"{music_name}{ext}")
