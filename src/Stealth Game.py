@@ -73,10 +73,12 @@ class StealthGame:
         self.best_objectives = 0
         self.best_time = 0
         
+        # Game state flags
         self.debug_draw = False
         self.upgrade_menu_open = False
         self.show_quit_confirmation = False
-        
+        self.show_reset_confirmation = False
+
         # Credit animation
         self.credit_animation_timer = 0.0
         self.credit_animation_amount = 0
@@ -113,6 +115,10 @@ class StealthGame:
         self.difficulty_display_names = ['Easy', 'Normal', 'Hard']
 
         self.create_buttons()
+
+        # Reset confirmation buttons
+        self.reset_yes_btn = Button(WIDTH//2 - 120, HEIGHT//2 + 80, 100, 40, "YES", RED, DARK_GRAY)
+        self.reset_no_btn = Button(WIDTH//2 + 20, HEIGHT//2 + 80, 100, 40, "NO", GREEN, DARK_GRAY)
 
         # Hack charge state
         self.hack_charging = False
@@ -369,8 +375,9 @@ class StealthGame:
                            icon=self.icons['hack'], hotkey="4"),
             'menu': Button(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50, "START MISSION", DARK_GREEN, GREEN),
             'exit': Button(WIDTH//2 - 100, HEIGHT//2 + 170, 200, 50, "EXIT", RED, (255, 100, 100)),
-            'settings': Button(WIDTH - 120, 20, 100, 40, "SETTINGS", DARK_GRAY, GRAY),
-            'upgrades': Button(WIDTH - 240, 20, 100, 40, "UPGRADES", DARK_GRAY, GRAY),
+            'settings': Button(WIDTH - 240, 20, 120, 40, "SETTINGS", DARK_GRAY, GRAY),
+            'upgrades': Button(WIDTH - 380, 20, 120, 40, "UPGRADES", DARK_GRAY, GRAY),
+            'reset': Button(WIDTH - 100, 20, 80, 40, "RESET", RED, DARK_GRAY),
             'quit_game': Button(WIDTH - 230, 20, 100, 40, "QUIT", RED, (255, 100, 100)),
             'difficulty': Button(WIDTH//2 - 100, HEIGHT//2 + 240, 200, 50, f"Difficulty: {self.difficulty_display_names[self.current_difficulty_index]}", DARK_GRAY, GRAY)
         }
@@ -470,11 +477,41 @@ class StealthGame:
             guard.current_time = random.uniform(0, guard.patrol_time)
         
         self.create_buttons()
+
+        # Reset quit confirmation buttons
+        self.reset_yes_btn = Button(WIDTH//2 - 120, HEIGHT//2 + 40, 100, 40, "YES", RED, DARK_GRAY)
+        self.reset_no_btn = Button(WIDTH//2 + 20, HEIGHT//2 + 40, 100, 40, "NO", GREEN, DARK_GRAY)
+
         # Reset menu button text when returning to menu
         self.buttons['menu'].text = "START MISSION"
         self.particle_sys.clear()
         self.toasts.clear()
         self.feedback_messages.clear()
+
+    def reset_all_progress(self):
+        """
+        Reset all game progress including upgrades and stats.
+        """
+        self.currency = 0
+        self.pending_credits = 0
+        self.perks = {
+            'cooldown_reduction': 0.0,
+            'camera_disable_bonus': 0.0,
+        }
+        self.unlocked_perks = set()
+        if hasattr(self, 'upgrade_purchase_count'):
+            self.upgrade_purchase_count = {
+                'cooldown_reduction': 0,
+                'camera_disable_bonus': 0,
+                'detection_resistance': 0
+            }
+        self.best_objectives = 0
+        self.best_time = 0
+        self.upgrade_menu_open = False
+        self.show_reset_confirmation = False
+        if hasattr(self, 'settings_menu') and self.settings_menu:
+            self.settings_menu.save_progress()
+        self.add_toast("All progress reset", YELLOW, 3.0)
 
     def handle_events(self):
         """
@@ -495,6 +532,17 @@ class StealthGame:
                 pos = pygame.mouse.get_pos()
 
                 if self.state == "menu":
+                    # Handle reset confirmation dialog clicks
+                    if self.show_reset_confirmation:
+                        if self.reset_yes_btn.is_clicked(pos):
+                            self.audio_manager.play_sfx("button_click")
+                            self.reset_all_progress()
+                        elif self.reset_no_btn.is_clicked(pos):
+                            self.audio_manager.play_sfx("button_click")
+                            self.show_reset_confirmation = False
+                        return
+
+                    # Handle menu button clicks
                     if self.buttons['menu'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
                         self.reset_game()
@@ -507,21 +555,31 @@ class StealthGame:
                             video_path=video_path,
                             video_speed=3
                         )
+
+                    # Handle exit button clicks
                     elif self.buttons['exit'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
                         self.running = False
-                    
+
+                    # Handle settings button clicks
                     elif self.buttons['settings'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
                         self.settings_menu.show()
-                    
+
+                    # Handle upgrades button clicks
                     elif self.buttons['upgrades'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
                         if self.upgrade_menu_open:
                             self.upgrade_menu_open = False
                         else:
                             self.upgrade_menu_open = True
-                           
+
+                    # Handle reset button clicks
+                    elif self.buttons['reset'].is_clicked(pos):
+                        self.audio_manager.play_sfx("button_click")
+                        self.show_reset_confirmation = True
+
+                    # Handle difficulty button clicks
                     elif self.buttons['difficulty'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
                         # Cycle through difficulties
@@ -534,7 +592,8 @@ class StealthGame:
                         
                         # Apply difficulty settings using consistent params
                         self.scale_params = self.difficulty_params.get(self.difficulty, self.difficulty_params['normal'])
-                    
+
+                # Handle reset confirmation dialog clicks
                 elif self.state == "playing":
                     if self.show_quit_confirmation:
                         # Handle quit confirmation dialog clicks
@@ -556,6 +615,7 @@ class StealthGame:
                     else:
                         self._handle_game_clicks(pos)
                 
+                # Handle endgame menu clicks
                 elif self.state in ["success", "failure"]:
                     if self.buttons['menu'].is_clicked(pos):
                         # Reset button text before transitioning
@@ -571,6 +631,7 @@ class StealthGame:
                     elif self.buttons['exit'].is_clicked(pos):
                         self.running = False
             
+            # Handle hack button charging
             elif event.type == pygame.MOUSEBUTTONUP:
                 if self.hack_charging:
                     self.hack_charging = False
@@ -629,7 +690,10 @@ class StealthGame:
             elif key == pygame.K_3:
                 self.purchase_upgrade('detection_resistance')
             elif key == pygame.K_ESCAPE:
-                self.upgrade_menu_open = False
+                if self.upgrade_menu_open:
+                    self.upgrade_menu_open = False
+                elif self.show_reset_confirmation:
+                    self.show_reset_confirmation = False
             return
 
     def _handle_game_clicks(self, pos):
@@ -973,11 +1037,17 @@ class StealthGame:
         self.buttons['exit'].draw(self.screen, self.font)
         self.buttons['settings'].draw(self.screen, self.font)
         self.buttons['upgrades'].draw(self.screen, self.font)
+        self.buttons['reset'].draw(self.screen, self.font)
         self.buttons['difficulty'].draw(self.screen, self.font)
 
         # Draw upgrade menu
         self.draw_upgrade_menu()
+
+        # Draw reset confirmation dialog
+        if self.show_reset_confirmation:
+            self.draw_reset_confirmation()
         
+        # Draw settings menu
         if self.settings_menu:
             self.settings_menu.draw(self.screen, self.font)
 
@@ -1368,6 +1438,48 @@ class StealthGame:
             inst_rect = inst_text.get_rect(center=(panel_x + panel_width//2, inst_y))
             self.screen.blit(inst_text, inst_rect)
             inst_y += 20
+    
+    def draw_reset_confirmation(self):
+        """Draw the reset confirmation dialog."""
+        # Dark overlay
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 200))
+        self.screen.blit(overlay, (0, 0))
+
+        # Dialog box
+        dialog_width, dialog_height = 500, 300
+        dialog_x = (WIDTH - dialog_width) // 2
+        dialog_y = (HEIGHT - dialog_height) // 2
+        dialog_rect = pygame.Rect(dialog_x, dialog_y, dialog_width, dialog_height)
+
+        pygame.draw.rect(self.screen, (60, 20, 20), dialog_rect, dialog_height)
+        pygame.draw.rect(self.screen, RED, dialog_rect, 3, border_radius=10)
+
+        # Warning text
+        title = self.title_font.render("! WARNING !", True, RED)
+        title_rect = title.get_rect(center=(dialog_x + dialog_width//2, dialog_y + 40))
+        self.screen.blit(title, title_rect)
+
+        # Warning message
+        messages = [
+            "This will permanently reset ALL progress:",
+            "• All credits and currency",
+            "• All purchased upgrades and perks",
+            "• All best scores and achievements",
+            "",
+            "This action CANNOT be undone."
+        ]
+
+        y = dialog_y + 80
+        for msg in messages:
+            text = self.small_font.render(msg, True, WHITE if msg.startswith("•") or msg == ""else YELLOW)
+            text_rect = text.get_rect(center=(dialog_x + dialog_width//2, y))
+            self.screen.blit(text, text_rect)
+            y += 25
+        
+        # Buttons
+        self.reset_yes_btn.draw(self.screen, self.font)
+        self.reset_no_btn.draw(self.screen, self.font)
 
     def run(self):
         """

@@ -4,16 +4,13 @@
     "music": 1.0,
     "sfx": 1.0
   },
-  "currency": 106,
+  "currency": 0,
   "perks": {
-    "cooldown_reduction": 1.2,
-    "camera_disable_bonus": 9.0
+    "cooldown_reduction": 0.0,
+    "camera_disable_bonus": 0.0
   },
-  "unlocked_perks": [
-    "cooldown_reduction",
-    "camera_disable_bonus"
-  ],
-  "best_objectives": 5,
-  "best_time": 38.08199999999921,
+  "unlocked_perks": [],
+  "best_objectives": 0,
+  "best_time": 0,
   "difficulty": "normal"
 }
