@@ -108,6 +108,10 @@ class StealthGame:
             self.guards.append(Guard(i + 1, patrol_time))
         self.load_guard_animations()
 
+        # Initialize difficulty display names before button creation
+        self.difficulty_menu_open = False
+        self.difficulty_display_names = ['Easy', 'Normal', 'Hard']
+
         self.create_buttons()
 
         # Hack charge state
@@ -146,12 +150,15 @@ class StealthGame:
         self.audio_manager = AudioManager()
         try:
             # Custom sound list for your game  
-            custom_sounds = [
-                'button_click', 'button_hover', 'alert_beep', 'footsteps',
-                'hack_success', 'hack_fail', 'camera_disable', 'lights_cut', 
-                'distraction', 'system_startup', 'countdown_tick',
-                'mission_complete', 'mission_failed'
-            ]
+            custom_sounds = {
+                'button_click': 'button_click', 'button_hover': 'button_hover', 
+                'alert_beep': 'alert_beep', 'footsteps': 'footsteps',
+                'hack_success': 'hack_success', 'hack_fail': 'hack_fail', 
+                'camera_disable': 'camera_disable', 'lights_cut': 'lights_cut', 
+                'distraction': 'distraction', 'system_startup': 'system_startup', 
+                'countdown_tick': 'countdown_tick', 'mission_complete': 'mission_complete', 
+                'mission_failed': 'mission_failed'
+            }
             self.audio_manager.load_sounds(custom_sounds)
         except Exception as e:
             print(f"Error initializing AudioManager: {e}")
@@ -164,14 +171,21 @@ class StealthGame:
             print(f"Error initializing SettingsMenu: {e}")
             self.settings_menu = None
            
-        # Difficulty selection
-        self.difficulty_menu_open = False
-        self.available_difficulties = ['Easy', 'Normal', 'Hard']
-        self.current_difficulty_index = 1  # Default to Normal
+        # Difficulty selection already initialized above
 
         # Auto-load progress on startup
         if self.settings_menu:
             self.settings_menu.load_progress()
+
+        # Text rendering cache for performance
+        self._text_cache = {}
+
+    def get_cached_text(self, text, font, color):
+        """Cache rendered text to improve performance."""
+        cache_key = f"{text}_{font}_{color}"
+        if cache_key not in self._text_cache:
+            self._text_cache[cache_key] = font.render(text, True, color)
+        return self._text_cache[cache_key]
 
     def purchase_upgrade(self, key):
         """
@@ -181,9 +195,21 @@ class StealthGame:
         Returns:
             bool: True if purchase was successful, False otherwise.
         """
-        costs = {'cooldown_reduction': 5, 'camera_disable_bonus': 8, 'detection_resistance': 12}
-        if self.currency >= costs.get(key, 999):
-            self.currency -= costs[key]
+        # Calculate cost based on previous purchases
+        if not hasattr(self, 'upgrade_purchase_count'):
+            self.upgrade_purchase_count = {'cooldown_reduction': 0, 'camera_disable_bonus': 0, 'detection_resistance': 0}
+        
+        # Base costs
+        base_costs = {'cooldown_reduction': 5, 'camera_disable_bonus': 8, 'detection_resistance': 12}
+
+        # Calculate cost with exponential scaling
+        purchase_count = self.upgrade_purchase_count.get(key, 0)
+        costs = int(base_costs[key] * (4 ** purchase_count))
+        
+        # Attempt purchase
+        if self.currency >= costs:
+            self.currency -= costs
+            self.upgrade_purchase_count[key] = purchase_count + 1
             if key == 'cooldown_reduction':
                 self.perks['cooldown_reduction'] = self.perks.get('cooldown_reduction', 0) + 0.2
                 self.unlocked_perks.add('cooldown_reduction')
@@ -207,7 +233,7 @@ class StealthGame:
         """
         self.state = target_state
         # Reset button text when transitioning to menu
-        if target_state == "menu":
+        if target_state == "menu" and hasattr(self, 'buttons'):
             self.buttons['menu'].text = "START MISSION"
  
     def create_icon(self, color, symbol):
@@ -280,6 +306,7 @@ class StealthGame:
         self.bg_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets", "videos", "hacking bg.mp4"))
         self.bg_cap = None
         self.bg_frame_surf = None
+        self.bg_scaled_surf = None  # Cache scaled background
         try:
             self.bg_cap = cv2.VideoCapture(self.bg_path)
             if not self.bg_cap.isOpened():
@@ -312,6 +339,8 @@ class StealthGame:
         try:
             surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
             self.bg_frame_surf = surf
+            # Pre-scale background to avoid scaling every frame
+            self.bg_scaled_surf = pygame.transform.scale(surf, (WIDTH, HEIGHT))
         except Exception:
             pass
 
@@ -343,7 +372,7 @@ class StealthGame:
             'settings': Button(WIDTH - 120, 20, 100, 40, "SETTINGS", DARK_GRAY, GRAY),
             'upgrades': Button(WIDTH - 240, 20, 100, 40, "UPGRADES", DARK_GRAY, GRAY),
             'quit_game': Button(WIDTH - 230, 20, 100, 40, "QUIT", RED, (255, 100, 100)),
-            'difficulty': Button(WIDTH//2 - 100, HEIGHT//2 + 240, 200, 50, f"Difficulty: {self.available_difficulties[self.current_difficulty_index]}", DARK_GRAY, GRAY)
+            'difficulty': Button(WIDTH//2 - 100, HEIGHT//2 + 240, 200, 50, f"Difficulty: {self.difficulty_display_names[self.current_difficulty_index]}", DARK_GRAY, GRAY)
         }
 
     def add_toast(self, text: str, color, duration: float = 2.0):
@@ -425,6 +454,7 @@ class StealthGame:
         self.animated_detection = 0.0
         self.objective_progress = 0
         self.animated_objectives = 0.0
+        self.pending_credits = 0
         self.camera_disabled = False
         self.camera_disable_time = 0
         self.camera_blink_time = 0.0
@@ -495,17 +525,15 @@ class StealthGame:
                     elif self.buttons['difficulty'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
                         # Cycle through difficulties
-                        self.current_difficulty_index = (self.current_difficulty_index + 1) % len(self.available_difficulties)
-                        difficulty_name = self.available_difficulties[self.current_difficulty_index]
+                        self.current_difficulty_index = (self.current_difficulty_index + 1) % len(self.difficulty_display_names)
+                        difficulty_name = self.difficulty_display_names[self.current_difficulty_index]
                         self.buttons['difficulty'].text = f"Difficulty: {difficulty_name}"
                         
-                        # Apply difficulty settings
-                        if difficulty_name == 'Easy':
-                            self.scale_params = {'guards': 2, 'detection_rate': 0.7, 'patrol_randomness': 0.8}
-                        elif difficulty_name == 'Normal':
-                            self.scale_params = {'guards': 3, 'detection_rate': 1.0, 'patrol_randomness': 1.0}
-                        elif difficulty_name == 'Hard':
-                            self.scale_params = {'guards': 4, 'detection_rate': 1.4, 'patrol_randomness': 1.2}
+                        # Update internal difficulty key
+                        self.difficulty = self.available_difficulties[self.current_difficulty_index]
+                        
+                        # Apply difficulty settings using consistent params
+                        self.scale_params = self.difficulty_params.get(self.difficulty, self.difficulty_params['normal'])
                     
                 elif self.state == "playing":
                     if self.show_quit_confirmation:
@@ -616,12 +644,15 @@ class StealthGame:
                 continue
             distance = math.sqrt((pos[0] - so['x'])**2 + (pos[1] - so['y'])**2)
             if distance <= 20:  # Click radius
-                # Add credits directly with animation
-                self.currency += so['reward']
-                self.add_credit_animation(so['reward'])
                 self.secondary_objectives.remove(so)
                 self.audio_manager.play_sfx("coin_collect")
+                # Store credit as pending
+                if not hasattr(self, 'pending_credits'):
+                    self.pending_credits = 0
+                self.pending_credits += so['reward']
+                self.add_credit_animation(so['reward'])
                 return
+            
         if self.buttons['camera'].is_clicked(pos):
             self.buttons['camera'].press()
             self.audio_manager.play_sfx("camera_disable")
@@ -719,10 +750,14 @@ class StealthGame:
             if self.hack_charge_time > self.hack_charge_target:
                 self.hack_charge_time = self.hack_charge_target
         
-        if random.random() < 0.02 * (1.0 if self.state == 'playing' else 0.0):
+        # Optimize secondary objective generation - reduce calls to heavy functions
+        if random.random() < 0.02:  # Only check if playing state
+            if not hasattr(self, '_obj_counter'):
+                self._obj_counter = 0
+            self._obj_counter += 1
             sx = random.randint(200, WIDTH - 200)
             sy = random.randint(200, 350)
-            obj = {'id': f'so{int(time.time())}', 'x': sx, 'y': sy, 'reward': random.randint(1,3), 
+            obj = {'id': f'so{self._obj_counter}', 'x': sx, 'y': sy, 'reward': random.randint(1,3), 
                    'time_left': random.uniform(15, 30), 'active': True}
             self.secondary_objectives.append(obj)
         
@@ -737,11 +772,11 @@ class StealthGame:
             if self.credit_animation_timer <= 0:
                 self.credit_animation_amount = 0
 
-        # Smooth interpolation for animated values
-        lerp = lambda a, b, t: a + (b - a) * min(1.0, t)
-        self.animated_time = lerp(self.animated_time, self.time_remaining, dt * 4.0)
-        self.animated_detection = lerp(self.animated_detection, self.detection_level, dt * 4.0)
-        self.animated_objectives = lerp(self.animated_objectives, self.objective_progress, dt * 4.0)
+        # Smooth interpolation for animated values (cached function)
+        interp_factor = min(1.0, dt * 4.0)
+        self.animated_time = self.animated_time + (self.time_remaining - self.animated_time) * interp_factor
+        self.animated_detection = self.animated_detection + (self.detection_level - self.animated_detection) * interp_factor
+        self.animated_objectives = self.animated_objectives + (self.objective_progress - self.animated_objectives) * interp_factor
 
         # Camera blink animation
         if self.camera_blink_time > 0:
@@ -825,23 +860,31 @@ class StealthGame:
             if self.time_remaining > self.best_time:
                 self.best_time = self.time_remaining
             
+            # Award pending credits on victory
+            if hasattr(self, 'pending_credits') and self.pending_credits > 0:
+                self.currency += self.pending_credits
+                self.pending_credits = 0
+            
             # Auto-save progress
             if hasattr(self, 'settings_menu') and self.settings_menu:
                 self.settings_menu.save_progress()
             
             self.state = "success"
             self.particle_sys.clear()
+
         elif self.detection_level >= self.max_detection or self.time_remaining <= 0:
+            # Mission failed and clear pending credits
             self.state = "failure"
             self.particle_sys.clear()
-        
+            self.pending_credits = 0
+
         # Update toasts
         for toast in list(self.toasts):
             toast['time'] -= dt
             if toast['time'] <= 0:
                 self.toasts.remove(toast)
             else:
-                alpha_ratio = toast['time'] / toast['duration']
+                alpha_ratio = toast['time'] / toast['duration'] if toast['duration'] > 0 else 1.0
                 toast['alpha'] = int(255 * min(1.0, alpha_ratio * 2.0))
         
     def trigger_random_event(self):
@@ -874,9 +917,8 @@ class StealthGame:
         old_screen = self.screen
         self.screen = self.canvas
 
-        if self.bg_frame_surf:
-            bg = pygame.transform.scale(self.bg_frame_surf, (WIDTH, HEIGHT))
-            self.screen.blit(bg, (0, 0))
+        if self.bg_scaled_surf:
+            self.screen.blit(self.bg_scaled_surf, (0, 0))
         else:
             self.screen.fill(BLACK)
 
@@ -909,7 +951,7 @@ class StealthGame:
         """
         Draw the main menu.
         """
-        title = self.title_font.render("Terminal Infiltration", True, GREEN)
+        title = self.get_cached_text("Terminal Infiltration", self.title_font, GREEN)
         title_rect = title.get_rect(center=(WIDTH//2, 150))
         self.screen.blit(title, title_rect)
 
@@ -944,7 +986,7 @@ class StealthGame:
         Draw the main game UI.
         """
         # Draw title
-        title = self.title_font.render("SECURITY TERMINAL", True, GREEN)
+        title = self.get_cached_text("SECURITY TERMINAL", self.title_font, GREEN)
         self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 20))
 
         # Draw status bars
@@ -957,7 +999,7 @@ class StealthGame:
             # Show animated credit gain
             base_text = f"Credits: {self.currency - self.credit_animation_amount}"
             anim_text = f" +{self.credit_animation_amount}"
-            final_text = f" → {self.currency}"
+            final_text = f" ={self.currency}"
             
             base_surf = self.small_font.render(base_text, True, YELLOW)
             anim_surf = self.small_font.render(anim_text, True, GREEN)
@@ -998,6 +1040,8 @@ class StealthGame:
 
         # Draw system statuses
         for i, sys_data in enumerate(systems):
+            if len(sys_data) < 3:
+                continue  # Skip malformed system data
             name = sys_data[0]
             status = sys_data[1]
             color = sys_data[2]
@@ -1078,7 +1122,7 @@ class StealthGame:
             # pulsing effect for detection bar when high
             draw_color = color
             if label == "DETECTION":
-                ratio = value / max_value
+                ratio = value / max_value if max_value > 0 else 0
                 if ratio >= 0.6:
                     # pulse period around 0.6s, amplitude small
                     period = 0.6
@@ -1089,7 +1133,7 @@ class StealthGame:
                         for c in color
                     )
             elif label == "TIME":
-                ratio = value / max_value
+                ratio = value / max_value if max_value > 0 else 0
                 if ratio <= 0.3:
                     period = 0.6
                     pulse = 0.5 * (1.0 + math.sin(2 * math.pi * (self.ui_time / period)))
@@ -1128,11 +1172,11 @@ class StealthGame:
             height (int): Height of the bar.
         """
         # Label
-        label = self.small_font.render("MISSION", True, WHITE)
+        label = self.get_cached_text("MISSION", self.small_font, WHITE)
         self.screen.blit(label, (x, y - 25))
 
         # Progress
-        progress = self.animated_objectives / self.objectives_needed
+        progress = self.animated_objectives / self.objectives_needed if self.objectives_needed > 0 else 0
 
         # Background
         pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
@@ -1157,7 +1201,7 @@ class StealthGame:
 
         # Percentage - round to nearest multiple of objectives to avoid 19%, 39%, etc.
         # Calculate based on actual completed objectives for clean percentages
-        actual_progress = self.objective_progress / self.objectives_needed
+        actual_progress = self.objective_progress / self.objectives_needed if self.objectives_needed > 0 else 0
         percentage = round(actual_progress * 100)
         progress_text = self.font.render(f"{percentage}%", True, WHITE)
         text_rect = progress_text.get_rect(center=(x + width//2, y + height//2))
@@ -1256,25 +1300,33 @@ class StealthGame:
         
         # Upgrade options
         upgrade_y = panel_y + 100
+
+        # Initialize purchase count if needed
+        if not hasattr(self, 'upgrade_purchase_count'):
+            self.upgrade_purchase_count = {'cooldown_reduction': 0, 'camera_disable_bonus': 0, 'detection_resistance': 0}
+        
+        # Calculate dynamic costs
+        base_costs = {'cooldown_reduction': 5, 'camera_disable_bonus': 8, 'detection_resistance': 12}
+
         upgrades = [
             {
                 'name': 'Faster Cooldowns',
                 'description': 'Reduce all cooldowns by 20%',
-                'cost': 5,
+                'cost': int(base_costs['cooldown_reduction'] * (4 ** self.upgrade_purchase_count['cooldown_reduction'])),
                 'key': 'cooldown_reduction',
                 'current': f"{int(self.perks.get('cooldown_reduction', 0) * 100)}%"
             },
             {
                 'name': 'Extended Camera Disable',
                 'description': 'Camera disable lasts 3s longer',
-                'cost': 8,
+                'cost': int(base_costs['camera_disable_bonus'] * (4 ** self.upgrade_purchase_count['camera_disable_bonus'])),
                 'key': 'camera_disable_bonus',
                 'current': f"+{int(self.perks.get('camera_disable_bonus', 0))}s"
             },
             {
                 'name': 'Detection Shield',
                 'description': 'Reduce detection gain by 15%',
-                'cost': 12,
+                'cost': int(base_costs['detection_resistance'] * (4 ** self.upgrade_purchase_count['detection_resistance'])),
                 'key': 'detection_resistance',
                 'current': f"{int(self.perks.get('detection_resistance', 0) * 100)}%"
             }

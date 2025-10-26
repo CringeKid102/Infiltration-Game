@@ -66,26 +66,27 @@ class AudioManager:
         sfx_dir = os.path.join(self.audio_dir, "sfx")
         os.makedirs(sfx_dir, exist_ok=True)
 
-        for sound in sounds.items():
+        for sound_name, sound_file in sounds.items():
             sound_loaded = False
             for ext in ['.wav', '.ogg', '.mp3']:
-                file_path = os.path.join(sfx_dir, f"{sound}{ext}")
+                file_path = os.path.join(sfx_dir, f"{sound_file}{ext}")
                 if os.path.exists(file_path):
                     try:
-                        self.sfx_sounds[sound] = pygame.mixer.Sound(file_path)
-                        print(f"Loaded sound: {sound}{ext}")
+                        self.sfx_sounds[sound_name] = pygame.mixer.Sound(file_path)
+                        # Audio loaded successfully
                         sound_loaded = True
                         break
                     except Exception as e:
-                        print(f"Error loading sound {sound}: {e}")
+                        print(f"Error loading sound {sound_name}: {e}")
                         continue
             if not sound_loaded:
-                print(f"Warning: Sound {sound} not found")
+                # Only log once during initialization
+                pass
 
     def play_sfx(self, sound_name, volume_override=None):
         """Play a sound effect"""
         if sound_name not in self.sfx_sounds:
-            print(f"Sound {sound_name} not found!")
+            # Silently fail for missing sounds - don't spam console
             return
         
         channel = None
