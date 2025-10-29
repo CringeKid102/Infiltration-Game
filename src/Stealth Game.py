@@ -50,6 +50,8 @@ class StealthGame:
         self.small_font = pygame.font.Font(None, 22)
 
         self.state = "menu"
+        self.paused = False
+        self.show_pause_menu = False
         self._load_icons()
         
         # Game parameters
@@ -68,6 +70,7 @@ class StealthGame:
         }
         self.unlocked_perks = set()
         self.currency = 0
+        self.pending_credits = 0
         
         # Statistics tracking
         self.best_objectives = 0
@@ -82,6 +85,12 @@ class StealthGame:
         # Credit animation
         self.credit_animation_timer = 0.0
         self.credit_animation_amount = 0
+
+        # End screen animation
+        self.end_screen_timer = 0.0
+        self.animated_end_objectives = 0
+        self.animated_end_detection = 0
+        self.animated_end_time = 0
 
         # Difficulty settings
         self.difficulty = 'normal'
@@ -119,6 +128,10 @@ class StealthGame:
         # Reset confirmation buttons
         self.reset_yes_btn = Button(WIDTH//2 - 120, HEIGHT//2 + 80, 100, 40, "YES", RED, DARK_GRAY)
         self.reset_no_btn = Button(WIDTH//2 + 20, HEIGHT//2 + 80, 100, 40, "NO", GREEN, DARK_GRAY)
+
+        # Pause menu buttons
+        self.pause_resume_btn = Button(WIDTH//2 - 100, HEIGHT//2 - 20, 200, 50, "RESUME", GREEN, DARK_GREEN)
+        self.pause_menu_btn = Button(WIDTH//2 - 100, HEIGHT//2 + 50, 200, 50, "RETURN TO MENU", BLUE, DARK_BLUE)
 
         # Hack charge state
         self.hack_charging = False
@@ -203,7 +216,11 @@ class StealthGame:
         """
         # Calculate cost based on previous purchases
         if not hasattr(self, 'upgrade_purchase_count'):
-            self.upgrade_purchase_count = {'cooldown_reduction': 0, 'camera_disable_bonus': 0, 'detection_resistance': 0}
+            self.upgrade_purchase_count = {
+                'cooldown_reduction': 0,
+                'camera_disable_bonus': 0, 
+                'detection_resistance': 0
+                }
         
         # Base costs
         base_costs = {'cooldown_reduction': 5, 'camera_disable_bonus': 8, 'detection_resistance': 12}
@@ -378,7 +395,7 @@ class StealthGame:
             'settings': Button(WIDTH - 240, 20, 120, 40, "SETTINGS", DARK_GRAY, GRAY),
             'upgrades': Button(WIDTH - 380, 20, 120, 40, "UPGRADES", DARK_GRAY, GRAY),
             'reset': Button(WIDTH - 100, 20, 80, 40, "RESET", RED, DARK_GRAY),
-            'quit_game': Button(WIDTH - 230, 20, 100, 40, "QUIT", RED, (255, 100, 100)),
+            'pause_game': Button(WIDTH - 100, 20, 100, 40, "QUIT", RED, (255, 100, 100)),
             'difficulty': Button(WIDTH//2 - 100, HEIGHT//2 + 240, 200, 50, f"Difficulty: {self.difficulty_display_names[self.current_difficulty_index]}", DARK_GRAY, GRAY)
         }
 
@@ -429,7 +446,11 @@ class StealthGame:
         
         # Message
         msg1 = self.small_font.render("If you quit now, you will lose", True, WHITE)
-        msg2 = self.small_font.render(f"all {self.currency} credits!", True, YELLOW)
+        pending = getattr(self, 'pending_credits', 0)
+        if pending > 0:
+            msg2 = self.small_font.render(f"{pending} pending credits!", True, YELLOW)
+        else:
+            msg2 = self.small_font.render("No credits will be lost.", True, GREEN)
         msg3 = self.small_font.render("Are you sure?", True, WHITE)
         
         msg1_rect = msg1.get_rect(center=(panel_x + panel_width//2, panel_y + 80))
@@ -476,11 +497,13 @@ class StealthGame:
             guard.alert_time = 0.0
             guard.current_time = random.uniform(0, guard.patrol_time)
         
+        self.secondary_objectives.clear()
+        
         self.create_buttons()
 
         # Reset quit confirmation buttons
-        self.reset_yes_btn = Button(WIDTH//2 - 120, HEIGHT//2 + 40, 100, 40, "YES", RED, DARK_GRAY)
-        self.reset_no_btn = Button(WIDTH//2 + 20, HEIGHT//2 + 40, 100, 40, "NO", GREEN, DARK_GRAY)
+        self.reset_yes_btn = Button(WIDTH//2 - 120, HEIGHT//2 + 80, 100, 40, "YES", RED, DARK_GRAY)
+        self.reset_no_btn = Button(WIDTH//2 + 20, HEIGHT//2 + 80, 100, 40, "NO", GREEN, DARK_GRAY)
 
         # Reset menu button text when returning to menu
         self.buttons['menu'].text = "START MISSION"
@@ -514,9 +537,7 @@ class StealthGame:
         self.add_toast("All progress reset", YELLOW, 3.0)
 
     def handle_events(self):
-        """
-        Handle user input events.
-        """
+        """Handle user input events."""
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 self.running = False
@@ -596,22 +617,38 @@ class StealthGame:
                 # Handle reset confirmation dialog clicks
                 elif self.state == "playing":
                     if self.show_quit_confirmation:
-                        # Handle quit confirmation dialog clicks
                         if hasattr(self, 'quit_yes_btn') and self.quit_yes_btn.is_clicked(pos):
-                            # Reset currency and return to menu
-                            self.currency = 0
+                            self.audio_manager.play_sfx("button_click")
+                            self.pending_credits = 0
                             self.show_quit_confirmation = False
+                            self.show_pause_menu = False
+                            self.paused = False
                             self.reset_game()
                             self.state = "menu"
+                            return
                         elif hasattr(self, 'quit_no_btn') and self.quit_no_btn.is_clicked(pos):
-                            # Cancel quit
+                            self.audio_manager.play_sfx("button_click")
                             self.show_quit_confirmation = False
-                    elif self.buttons['settings'].is_clicked(pos):
+                            return
+                    # Handle pause menu clicks
+                    if self.show_pause_menu:
+                        if self.pause_resume_btn.is_clicked(pos):
+                            self.audio_manager.play_sfx("button_click")
+                            self.show_pause_menu = False
+                            self.paused = False
+                            return
+                        elif self.pause_menu_btn.is_clicked(pos):
+                            self.audio_manager.play_sfx("button_click")
+                            self.show_quit_confirmation = True
+                            return
+                    
+                    if self.buttons['settings'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
                         self.settings_menu.show()
-                    elif self.buttons['quit_game'].is_clicked(pos):
+                    elif self.buttons['pause_game'].is_clicked(pos):
                         self.audio_manager.play_sfx("button_click")
-                        self.show_quit_confirmation = True
+                        self.show_pause_menu = True
+                        self.paused = True
                     else:
                         self._handle_game_clicks(pos)
                 
@@ -670,16 +707,34 @@ class StealthGame:
             key (int): The pygame key code.
         """
         if self.state == "playing":
+            if key == pygame.K_ESCAPE:
+                if self.show_pause_menu:
+                    if self.show_quit_confirmation:
+                        self.show_quit_confirmation = False
+                    else:
+                        self.show_pause_menu = False
+                        self.paused = False
+                else:
+                    self.show_pause_menu = True
+                    self.paused = True
+                    self.audio_manager.play_sfx("button_click")
+                return
+            
+            if self.paused:
+                return
+
             action_map = {
                 pygame.K_1: 'camera',
                 pygame.K_2: 'lights',
                 pygame.K_3: 'distract',
-                pygame.K_4: 'hack',
             }
 
             button_key = action_map.get(key)
             if button_key and self.buttons[button_key].active:
                 self._handle_game_clicks(self.buttons[button_key].rect.center)
+            
+            if key == pygame.K_4 and self.buttons['hack'].active:
+                self._handle_game_clicks(self.buttons['hack'].rect.center)
 
         # upgrade shortcuts when upgrade menu open
         if self.upgrade_menu_open:
@@ -794,6 +849,9 @@ class StealthGame:
         if transition_result['active']:
             return
         
+        if self.state in ["success", "failure"]:
+            self.update_end_screen_animations(dt)
+
         if self.settings_menu:
             self.settings_menu.update(dt)
 
@@ -801,7 +859,7 @@ class StealthGame:
             if not self.audio_manager.is_music_playing():
                 self.audio_manager.play_music("menu_theme", loop=True)
             return
-        if self.state != "playing":
+        if self.state != "playing" or self.paused:
             return
 
         # Update timers
@@ -876,14 +934,16 @@ class StealthGame:
         self.detection_level += base_detection
 
         # Guards can spot player in danger zone
+        danger_zone_start = 0.4
+        danger_zone_end = 0.6
+        detection_multiplier_lights = 2 if not self.lights_disabled else 1
+        detection_multiplier_camera = 1.5 if not self.camera_disabled else 1
+
         for guard in self.guards:
-            if 0.4 < guard.position < 0.6:
+            if danger_zone_start < guard.position < danger_zone_end:
                 detection_chance = 0.02
-                if not self.lights_disabled:
-                    detection_chance *= 2
-                if not self.camera_disabled:
-                    detection_chance *= 1.5
-                
+                detection_chance *= detection_multiplier_lights * detection_multiplier_camera
+                                
                 if random.random() < detection_chance:
                     guard.alert = True
                     delta = 5
@@ -933,6 +993,11 @@ class StealthGame:
             if hasattr(self, 'settings_menu') and self.settings_menu:
                 self.settings_menu.save_progress()
             
+            self.end_screen_timer = 0.0
+            self.animated_end_objectives = 0
+            self.animated_end_detection = 0
+            self.animated_end_time = 0
+            
             self.state = "success"
             self.particle_sys.clear()
 
@@ -942,6 +1007,11 @@ class StealthGame:
             self.particle_sys.clear()
             self.pending_credits = 0
 
+            self.end_screen_timer = 0.0
+            self.animated_end_objectives = 0
+            self.animated_end_detection = 0
+            self.animated_end_time = 0
+
         # Update toasts
         for toast in list(self.toasts):
             toast['time'] -= dt
@@ -950,6 +1020,17 @@ class StealthGame:
             else:
                 alpha_ratio = toast['time'] / toast['duration'] if toast['duration'] > 0 else 1.0
                 toast['alpha'] = int(255 * min(1.0, alpha_ratio * 2.0))
+    
+    def update_end_screen_animations(self, dt):
+        """Update the animated values for the end screen."""
+        self.end_screen_timer += dt
+
+        progress = min(1.0, self.end_screen_timer / 1.5)
+        eased_progress = 1 - pow(1 - progress, 3)
+        
+        self.animated_end_objectives = int(self.objective_progress * eased_progress)
+        self.animated_end_detection = int(self.detection_level * eased_progress)
+        self.animated_end_time = int(self.time_remaining * eased_progress)
         
     def trigger_random_event(self):
         """
@@ -992,6 +1073,10 @@ class StealthGame:
             self.draw_menu()
         elif self.state == "playing":
             self.draw_game()
+            if self.paused:
+                self.draw_pause_menu()
+                if self.show_quit_confirmation:
+                    self.draw_quit_confirmation()
         elif self.state == "success":
             self.draw_end_screen("MISSION SUCCESS", GREEN)
         elif self.state == "failure":
@@ -1064,30 +1149,31 @@ class StealthGame:
         self.draw_status_bars(WIDTH - 325, 90, 300, 30, "DETECTION", self.animated_detection, self.max_detection, RED, self.icons['radar'])
         self.draw_mission_progress(WIDTH//2 - 150, 90, 300, 30)
         
-        # Draw currency with animation (moved to top-right to avoid guards)
+        # Draw currency
         if self.credit_animation_timer > 0:
             # Show animated credit gain
-            base_text = f"Credits: {self.currency - self.credit_animation_amount}"
+            pending = getattr(self, 'pending_credits', 0)
+            current_earned = self.currency - self.credit_animation_amount
+            base_text = f"Credits: {current_earned}"
             anim_text = f" +{self.credit_animation_amount}"
-            final_text = f" ={self.currency}"
+            final_text = f" ={self.currency + pending}"
             
             base_surf = self.small_font.render(base_text, True, YELLOW)
             anim_surf = self.small_font.render(anim_text, True, GREEN)
             final_surf = self.small_font.render(final_text, True, YELLOW)
             
-            total_width = base_surf.get_width() + anim_surf.get_width() + final_surf.get_width()
-            start_x = WIDTH - total_width - 20
-            
-            self.screen.blit(base_surf, (start_x, 60))
-            self.screen.blit(anim_surf, (start_x + base_surf.get_width(), 60))
-            self.screen.blit(final_surf, (start_x + base_surf.get_width() + anim_surf.get_width(), 60))
+            self.screen.blit(base_surf, (20, 20))
+            self.screen.blit(anim_surf, (20 + base_surf.get_width(), 20))
+            self.screen.blit(final_surf, (20 + base_surf.get_width() + anim_surf.get_width(), 20))
         else:
-            currency_text = self.small_font.render(f"Credits: {self.currency}", True, YELLOW)
-            self.screen.blit(currency_text, (WIDTH - currency_text.get_width() - 20, 60))
+            pending = getattr(self, 'pending_credits', 0)
+            total_credits = self.currency + pending
+            currency_text = self.small_font.render(f"Credits: {total_credits}", True, YELLOW)
+            self.screen.blit(currency_text, (20, 20))
         
         # Draw current difficulty (moved below credits)
         difficulty_text = self.small_font.render(f"Difficulty: {self.difficulty.capitalize()}", True, WHITE)
-        self.screen.blit(difficulty_text, (WIDTH - difficulty_text.get_width() - 20, 130))
+        self.screen.blit(difficulty_text, (20, 45))
 
         # Show feedback messages
         for i, msg in enumerate(self.feedback_messages):
@@ -1101,406 +1187,6 @@ class StealthGame:
             guard.draw(self.screen, 100, monitor_y + i * 60, 800, 40)
 
         # System statuses
-        status_y = 350
-        systems = [
-            ("CAMERAS", "OFFLINE" if self.camera_disabled else "ONLINE", 
-             GREEN if self.camera_disabled else RED, self.camera_blink_active),
-            ("LIGHTS", "OFFLINE" if self.lights_disabled else "ONLINE", GREEN if self.lights_disabled else RED)
-        ]
-
-        # Draw system statuses
-        for i, sys_data in enumerate(systems):
-            if len(sys_data) < 3:
-                continue  # Skip malformed system data
-            name = sys_data[0]
-            status = sys_data[1]
-            color = sys_data[2]
-            blink = sys_data[3] if len(sys_data) > 3 else False
-            if blink and int(self.ui_time *  10) % 2 == 0:
-                color = YELLOW
-            text = self.small_font.render(f"{name}: {status}", True, color)
-            self.screen.blit(text, (100 + i * 250, status_y))
-
-        # Show current event
-        if self.current_event:
-            ev_text = self.current_event['text'] if isinstance(self.current_event, dict) else str(self.current_event)
-            event_text = self.small_font.render(f"! {ev_text}", True, YELLOW)
-            self.screen.blit(event_text, (WIDTH//2 - event_text.get_width()//2, 390))
-
-        # Draw action buttons
-        for key in ['camera', 'lights', 'distract', 'hack']:
-            show_tooltip = self.buttons[key].is_hovered()
-            self.buttons[key].draw(self.screen, self.small_font, show_tooltip)
-
-        # Draw upgrade shop
-        self.draw_upgrade_menu()
-
-        # Draw secondary objectives
-        for so in self.secondary_objectives:
-            if not so['active']:
-                continue
-            # Make objectives more visible with pulsing effect
-            pulse = abs(math.sin(time.time() * 3)) * 0.3 + 0.7
-            radius = int(20 * pulse)
-            # Draw outer glow
-            pygame.draw.circle(self.screen, (255, 255, 0, 100), (so['x'], so['y']), radius + 5)
-            # Draw main circle
-            pygame.draw.circle(self.screen, YELLOW, (so['x'], so['y']), radius)
-            # Draw border
-            pygame.draw.circle(self.screen, WHITE, (so['x'], so['y']), radius, 2)
-            # Draw text
-            txt = self.font.render(f"+{so['reward']}", True, BLACK)
-            self.screen.blit(txt, (so['x'] - txt.get_width()//2, so['y'] - txt.get_height()//2))
-
-        # Draw toasts
-        self.draw_toasts()
-
-        # Draw settings and quit buttons during gameplay
-        self.buttons['settings'].draw(self.screen, self.font)
-        self.buttons['quit_game'].draw(self.screen, self.font)
-        
-        if self.settings_menu:
-            self.settings_menu.draw(self.screen, self.font)
-        
-        # Draw quit confirmation dialog
-        if self.show_quit_confirmation:
-            self.draw_quit_confirmation()
-
-    def draw_status_bars(self, x, y, width, height, label, value, max_value, color, icon=None):
-        """
-        Draw a status bar with label, value, and icon.
-        Args:
-            x (int): X position.
-            y (int): Y position.
-            width (int): Width of the bar.
-            height (int): Height of the bar.
-            label (str): Label text.
-            value (float): Current value.
-            max_value (float): Maximum value.
-            color (Tuple[int,int,int]): Color of the filled portion.
-            icon (pygame.Surface): Optional icon to display.
-        """
-        label_text = self.small_font.render(label, True, WHITE)
-        self.screen.blit(label_text, (x, y - 25))
-
-        pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
-
-        if max_value > 0:
-            fill_width = int((value / max_value) * width)
-            fill_width = max(0, min(fill_width, width))
-        
-            # pulsing effect for detection bar when high
-            draw_color = color
-            if label == "DETECTION":
-                ratio = value / max_value if max_value > 0 else 0
-                if ratio >= 0.6:
-                    # pulse period around 0.6s, amplitude small
-                    period = 0.6
-                    pulse = 0.5 * (1.0 + math.sin(2 * math.pi * (self.ui_time / period)))
-                    amp = 0.45
-                    draw_color = tuple(
-                        min(255, int(c + (255 - c) * pulse * amp))
-                        for c in color
-                    )
-            elif label == "TIME":
-                ratio = value / max_value if max_value > 0 else 0
-                if ratio <= 0.3:
-                    period = 0.6
-                    pulse = 0.5 * (1.0 + math.sin(2 * math.pi * (self.ui_time / period)))
-                    amp = 0.45
-                    target = (255, 200, 40)
-                    draw_color = tuple(
-                        min(255, int(c + (t - c) * pulse * amp))
-                        for c, t in zip(color, target)
-                    )
-            pygame.draw.rect(self.screen, draw_color, (x, y, fill_width, height))
-
-        # Border
-        pygame.draw.rect(self.screen, WHITE, (x, y, width, height), 2)
-
-        # Icon
-        if icon:
-            icon_x = x + 5
-            icon_y = y + height//2 - icon.get_height()//2
-            self.screen.blit(icon, (icon_x, icon_y))
-
-        if label == 'TIME':
-            value_text = self.small_font.render(f"{int(value)}s", True, WHITE)
-        else:
-            value_text = self.small_font.render(f"{int(value)}%", True, WHITE)
-        
-        text_rect = value_text.get_rect(center=(x + width//2, y + height//2))
-        self.screen.blit(value_text, text_rect)
-
-    def draw_mission_progress(self, x, y, width, height):
-        """
-        Draw the mission progress bar.
-        Args:
-            x (int): X position.
-            y (int): Y position.
-            width (int): Width of the bar.
-            height (int): Height of the bar.
-        """
-        # Label
-        label = self.get_cached_text("MISSION", self.small_font, WHITE)
-        self.screen.blit(label, (x, y - 25))
-
-        # Progress
-        progress = self.animated_objectives / self.objectives_needed if self.objectives_needed > 0 else 0
-
-        # Background
-        pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
-
-        # Fill
-        fill_width = int(progress * width)
-        gradient_color = (
-            int(255 * (1 - progress) + 0 * progress),
-            int(0 * (1 - progress) + 255 * progress),
-            0
-        )
-        pygame.draw.rect(self.screen, gradient_color, (x, y, fill_width, height))
-
-        # Border
-        pygame.draw.rect(self.screen, WHITE, (x, y, width, height), 2)
-
-        # Icon
-        icon = self.icons['target']
-        icon_x = x + 5
-        icon_y = y + height//2 - icon.get_height()//2
-        self.screen.blit(icon, (icon_x, icon_y))
-
-        # Percentage - round to nearest multiple of objectives to avoid 19%, 39%, etc.
-        # Calculate based on actual completed objectives for clean percentages
-        actual_progress = self.objective_progress / self.objectives_needed if self.objectives_needed > 0 else 0
-        percentage = round(actual_progress * 100)
-        progress_text = self.font.render(f"{percentage}%", True, WHITE)
-        text_rect = progress_text.get_rect(center=(x + width//2, y + height//2))
-        self.screen.blit(progress_text, text_rect)
-
-    def draw_toasts(self):
-        """
-        Draw toast notifications.
-        """
-        toast_x = WIDTH // 2
-        toast_y = HEIGHT - 100
-
-        for i, toast in enumerate(self.toasts):
-            # Slide up animation
-            target_y = toast_y - i * 40
-
-            # Redner text
-            text_surf = self.font.render(toast['text'], True, toast['color'])
-            text_surf.set_alpha(toast.get('alpha', 255))
-
-            # Background
-            padding = 10
-            bg_rect = pygame.Rect(
-                toast_x - text_surf.get_width() // 2 - padding,
-                target_y - padding,
-                text_surf.get_width() + 2 * padding,
-                text_surf.get_height() + 2 * padding
-            )
-
-            bg_surf = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
-            bg_surf.fill((0, 0, 0, 180))
-            self.screen.blit(bg_surf, bg_rect.topleft)
-            pygame.draw.rect(self.screen, toast['color'], bg_rect, 2, border_radius=5)
-
-            # Text
-            text_rect = text_surf.get_rect(center=(toast_x, target_y + text_surf.get_height() // 2))
-            self.screen.blit(text_surf, text_rect)
-
-    def draw_end_screen(self, message, color):
-        """
-        Draw the end screen (success or failure).
-        Args:
-            message (str): The main message to display.
-            color (Tuple[int,int,int]): The color of the message text.
-        """
-        text = self.title_font.render(message, True, color)
-        text_rect = text.get_rect(center=(WIDTH//2, HEIGHT//2 - 100))
-        self.screen.blit(text, text_rect)
-
-        stats = [
-            f"Objectives Completed: {self.objective_progress}/{self.objectives_needed}",
-            f"Final Detection: {int(self.detection_level)}%",
-            f"Time Remaining: {int(self.time_remaining)}s"
-        ]
-
-        y = HEIGHT//2
-        for stat in stats:
-            stat_text = self.font.render(stat, True, WHITE)
-            stat_rect = stat_text.get_rect(center=(WIDTH//2, y))
-            self.screen.blit(stat_text, stat_rect)
-            y += 40
-        
-        self.buttons['menu'].text = "RETURN TO MENU"
-        self.buttons['menu'].draw(self.screen, self.font)
-        
-        self.buttons['exit'].rect.y = self.buttons['menu'].rect.y + 70
-        self.buttons['exit'].draw(self.screen, self.font)
-
-    def draw_upgrade_menu(self):
-        """Draw the upgrade/perks shop menu."""
-        if not self.upgrade_menu_open:
-            return
-            
-        # Background overlay
-        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 180))
-        self.screen.blit(overlay, (0, 0))
-        
-        # Shop panel
-        panel_width, panel_height = 500, 400
-        panel_x = (WIDTH - panel_width) // 2
-        panel_y = (HEIGHT - panel_height) // 2
-        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
-        
-        pygame.draw.rect(self.screen, (40, 40, 60), panel_rect, border_radius=10)
-        pygame.draw.rect(self.screen, (120, 120, 120), panel_rect, 3, border_radius=10)
-        
-        # Title
-        title = self.title_font.render("UPGRADE SHOP", True, GREEN)
-        title_rect = title.get_rect(center=(panel_x + panel_width//2, panel_y + 30))
-        self.screen.blit(title, title_rect)
-        
-        # Currency display
-        currency_text = self.font.render(f"Credits: {self.currency}", True, YELLOW)
-        self.screen.blit(currency_text, (panel_x + 20, panel_y + 60))
-        
-        # Upgrade options
-        upgrade_y = panel_y + 100
-
-        # Initialize purchase count if needed
-        if not hasattr(self, 'upgrade_purchase_count'):
-            self.upgrade_purchase_count = {'cooldown_reduction': 0, 'camera_disable_bonus': 0, 'detection_resistance': 0}
-        
-        # Calculate dynamic costs
-        base_costs = {'cooldown_reduction': 5, 'camera_disable_bonus': 8, 'detection_resistance': 12}
-
-        upgrades = [
-            {
-                'name': 'Faster Cooldowns',
-                'description': 'Reduce all cooldowns by 20%',
-                'cost': int(base_costs['cooldown_reduction'] * (4 ** self.upgrade_purchase_count['cooldown_reduction'])),
-                'key': 'cooldown_reduction',
-                'current': f"{int(self.perks.get('cooldown_reduction', 0) * 100)}%"
-            },
-            {
-                'name': 'Extended Camera Disable',
-                'description': 'Camera disable lasts 3s longer',
-                'cost': int(base_costs['camera_disable_bonus'] * (4 ** self.upgrade_purchase_count['camera_disable_bonus'])),
-                'key': 'camera_disable_bonus',
-                'current': f"+{int(self.perks.get('camera_disable_bonus', 0))}s"
-            },
-            {
-                'name': 'Detection Shield',
-                'description': 'Reduce detection gain by 15%',
-                'cost': int(base_costs['detection_resistance'] * (4 ** self.upgrade_purchase_count['detection_resistance'])),
-                'key': 'detection_resistance',
-                'current': f"{int(self.perks.get('detection_resistance', 0) * 100)}%"
-            }
-        ]
-        
-        for i, upgrade in enumerate(upgrades):
-            y_pos = upgrade_y + i * 80
-            
-            # Upgrade box
-            upgrade_rect = pygame.Rect(panel_x + 20, y_pos, panel_width - 40, 70)
-            color = (0, 80, 0) if self.currency >= upgrade['cost'] else (80, 40, 40)
-            pygame.draw.rect(self.screen, color, upgrade_rect, border_radius=5)
-            pygame.draw.rect(self.screen, WHITE, upgrade_rect, 2, border_radius=5)
-            
-            # Upgrade info
-            name_text = self.font.render(upgrade['name'], True, WHITE)
-            desc_text = self.small_font.render(upgrade['description'], True, (200, 200, 200))
-            cost_text = self.small_font.render(f"Cost: {upgrade['cost']} credits", True, YELLOW)
-            current_text = self.small_font.render(f"Current: {upgrade['current']}", True, GREEN)
-            
-            self.screen.blit(name_text, (upgrade_rect.x + 10, upgrade_rect.y + 5))
-            self.screen.blit(desc_text, (upgrade_rect.x + 10, upgrade_rect.y + 25))
-            self.screen.blit(cost_text, (upgrade_rect.x + 10, upgrade_rect.y + 45))
-            self.screen.blit(current_text, (upgrade_rect.x + 200, upgrade_rect.y + 45))
-            
-            # Buy button (number key)
-            key_text = self.font.render(f"[{i+1}]", True, WHITE)
-            self.screen.blit(key_text, (upgrade_rect.right - 40, upgrade_rect.y + 20))
-        
-        # Instructions
-        instructions = [
-            "Press 1-3 to purchase upgrades",
-            "Press ESC or click Upgrades again to close"
-        ]
-        
-        inst_y = panel_y + panel_height - 50
-        for instruction in instructions:
-            inst_text = self.small_font.render(instruction, True, (180, 180, 180))
-            inst_rect = inst_text.get_rect(center=(panel_x + panel_width//2, inst_y))
-            self.screen.blit(inst_text, inst_rect)
-            inst_y += 20
-    
-    def draw_reset_confirmation(self):
-        """Draw the reset confirmation dialog."""
-        # Dark overlay
-        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 200))
-        self.screen.blit(overlay, (0, 0))
-
-        # Dialog box
-        dialog_width, dialog_height = 500, 300
-        dialog_x = (WIDTH - dialog_width) // 2
-        dialog_y = (HEIGHT - dialog_height) // 2
-        dialog_rect = pygame.Rect(dialog_x, dialog_y, dialog_width, dialog_height)
-
-        pygame.draw.rect(self.screen, (60, 20, 20), dialog_rect, dialog_height)
-        pygame.draw.rect(self.screen, RED, dialog_rect, 3, border_radius=10)
-
-        # Warning text
-        title = self.title_font.render("! WARNING !", True, RED)
-        title_rect = title.get_rect(center=(dialog_x + dialog_width//2, dialog_y + 40))
-        self.screen.blit(title, title_rect)
-
-        # Warning message
-        messages = [
-            "This will permanently reset ALL progress:",
-            "• All credits and currency",
-            "• All purchased upgrades and perks",
-            "• All best scores and achievements",
-            "",
-            "This action CANNOT be undone."
-        ]
-
-        y = dialog_y + 80
-        for msg in messages:
-            text = self.small_font.render(msg, True, WHITE if msg.startswith("•") or msg == ""else YELLOW)
-            text_rect = text.get_rect(center=(dialog_x + dialog_width//2, y))
-            self.screen.blit(text, text_rect)
-            y += 25
-        
-        # Buttons
-        self.reset_yes_btn.draw(self.screen, self.font)
-        self.reset_no_btn.draw(self.screen, self.font)
-
-    def run(self):
-        """
-        Run the main game loop.
-        """
-        while self.running:
-            dt = self.clock.tick(FPS) / 1000.0
-
-            self.update_background(dt)
-
-            self.handle_events()
-            self.update(dt)
-            self.draw()
-        
-        self.transition_manager.clear()
-        
-        if self.bg_cap:
-            try:
-                self.bg_cap.release()
-            except Exception:
-                pass
         
         pygame.quit()
 
