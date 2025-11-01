@@ -106,6 +106,14 @@ class StealthGame:
         self.current_difficulty_index = self.available_difficulties.index(self.difficulty)
         self.scale_params = self.difficulty_params.get(self.difficulty, self.difficulty_params['normal'])
 
+        # Guard initialization
+        num_guards = self.scale_params['guards']
+        self.guards = []
+        for i in range(num_guards):
+            patrol_time = int(8 + random.uniform(-2, 2) * self.scale_params['patrol_randomness'])
+            self.guards.append(Guard(i + 1, patrol_time))
+        self.load_guard_animations()
+
         # Smooth animated values
         self.animated_time = self.mission_time
         self.animated_detection = 0.0
@@ -384,10 +392,8 @@ class StealthGame:
             pass
 
     def create_buttons(self):
-        """
-        Create action buttons for the game.
-        """
-        button_y = 450
+        """Create action buttons for the game."""
+        button_y = 500
         button_width = 140
         button_height = 50
         spacing = 160
@@ -411,7 +417,7 @@ class StealthGame:
             'settings': Button(WIDTH - 240, 20, 120, 40, "SETTINGS", DARK_GRAY, GRAY),
             'upgrades': Button(WIDTH - 380, 20, 120, 40, "UPGRADES", DARK_GRAY, GRAY),
             'reset': Button(WIDTH - 100, 20, 80, 40, "RESET", RED, DARK_GRAY),
-            'pause_game': Button(WIDTH - 100, 20, 100, 40, "QUIT", RED, (255, 100, 100)),
+            'pause_game': Button(WIDTH - 110, 20, 100, 40, "QUIT", RED, (255, 100, 100)),
             'difficulty': Button(WIDTH//2 - 100, HEIGHT//2 + 240, 200, 50, f"Difficulty: {self.difficulty_display_names[self.current_difficulty_index]}", DARK_GRAY, GRAY)
         }
 
@@ -508,14 +514,21 @@ class StealthGame:
         self.event_timer = 0
         self.current_event = None
 
+        num_guards = self.scale_params['guards']
+        self.guards = []
+        for i in range(num_guards):
+            patrol_time = int(8 + random.uniform(-2, 2) * self.scale_params['patrol_randomness'])
+            self.guards.append(Guard(i + 1, patrol_time))
+        self.load_guard_animations()
+
+        self.create_buttons()
+
         for guard in self.guards:
             guard.alert = False
             guard.alert_time = 0.0
             guard.current_time = random.uniform(0, guard.patrol_time)
         
         self.secondary_objectives.clear()
-        
-        self.create_buttons()
 
         # Reset quit confirmation buttons
         self.reset_yes_btn = Button(WIDTH//2 - 120, HEIGHT//2 + 80, 100, 40, "YES", RED, DARK_GRAY)
@@ -1114,7 +1127,7 @@ class StealthGame:
     
     def draw_menu(self):
         """Draw the main menu."""
-        title = self.get_static_text("Terminal Infiltration", self.title_font, GREEN)
+        title = self.get_static_text("menu_title", "Terminal Infiltration", self.title_font, GREEN)
         title_rect = title.get_rect(center=(WIDTH//2, 150))
         self.screen.blit(title, title_rect)
 
@@ -1153,7 +1166,7 @@ class StealthGame:
     def draw_game(self):
         """Draw the main game UI."""
         # Draw title
-        title = self.get_static_text("SECURITY TERMINAL", self.title_font, GREEN)
+        title = self.get_static_text("game_title", "SECURITY TERMINAL", self.title_font, GREEN)
         self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 20))
 
         # Draw status bars
@@ -1199,7 +1212,7 @@ class StealthGame:
             guard.draw(self.screen, 100, monitor_y + i * 60, 800, 40)
 
         # System statuses
-        status_y = 350
+        status_y = 150 + (len(self.guards) * 60) + 10
         systems = [
             ("CAMERAS", "OFFLINE" if self.camera_disabled else "ONLINE", 
              GREEN if self.camera_disabled else RED, self.camera_blink_active),
@@ -1223,8 +1236,9 @@ class StealthGame:
         if self.current_event:
             ev_text = self.current_event['text'] if isinstance(self.current_event, dict) else str(self.current_event)
             event_text = self.small_font.render(f"! {ev_text}", True, YELLOW)
-            self.screen.blit(event_text, (WIDTH//2 - event_text.get_width()//2, 390))
-        
+            event_y = 150 + (len(self.guards) * 60) + 50
+            self.screen.blit(event_text, (WIDTH//2 - event_text.get_width()//2, event_y))
+
         # Draw action buttons
         for key in ['camera', 'lights', 'distract', 'hack']:
             show_tooltip = self.buttons[key].is_hovered()
