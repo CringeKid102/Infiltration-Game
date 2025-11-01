@@ -49,6 +49,9 @@ class StealthGame:
         self.font = pygame.font.Font(None, 28)
         self.small_font = pygame.font.Font(None, 22)
 
+        # Static text cache
+        self._static_text_cache = {}
+
         self.state = "menu"
         self.paused = False
         self.show_pause_menu = False
@@ -201,10 +204,16 @@ class StealthGame:
 
     def get_cached_text(self, text, font, color):
         """Cache rendered text to improve performance."""
-        cache_key = f"{text}_{font}_{color}"
+        cache_key = (text, id(font), color)
         if cache_key not in self._text_cache:
-            self._text_cache[cache_key] = font.render(text, True, color)
+            self._text_cache[cache_key] = font.render(text, True, color).convert_alpha()
         return self._text_cache[cache_key]
+
+    def get_static_text(self, key, text, font, color):
+        """Cache static rendered text."""
+        if key not in self._static_text_cache:
+            self._static_text_cache[key] = font.render(text, True, color).convert_alpha()
+        return self._static_text_cache[key]
 
     def purchase_upgrade(self, key):
         """
@@ -277,17 +286,15 @@ class StealthGame:
         return surf
 
     def _load_icons(self):
-        """
-        Load button icons.
-        """
+        """Load button icons."""
         self.icons = {
-            'clock': self.create_icon((100, 150, 255), 'T'),
-            'radar': self.create_icon((255, 100, 100), 'D'),
-            'target': self.create_icon((100, 255, 100), 'O'),
-            'camera': self.create_icon((100, 100, 200), 'C'),
-            'light': self.create_icon((200, 200, 100), 'L'),
-            'distract': self.create_icon((200, 100, 200), 'D'),
-            'hack': self.create_icon((100, 200, 100), 'H'),
+            'clock': self.create_icon((100, 150, 255), 'T').convert_alpha(),
+            'radar': self.create_icon((255, 100, 100), 'D').convert_alpha(),
+            'target': self.create_icon((100, 255, 100), 'O').convert_alpha(),
+            'camera': self.create_icon((100, 100, 200), 'C').convert_alpha(),
+            'light': self.create_icon((200, 200, 100), 'L').convert_alpha(),
+            'distract': self.create_icon((200, 100, 200), 'D').convert_alpha(),
+            'hack': self.create_icon((100, 200, 100), 'H').convert_alpha(),
         }
     
     def load_guard_animations(self):
@@ -329,7 +336,8 @@ class StealthGame:
         self.bg_path = os.path.normpath(os.path.join(os.path.dirname(__file__), "..", "assets", "videos", "hacking bg.mp4"))
         self.bg_cap = None
         self.bg_frame_surf = None
-        self.bg_scaled_surf = None  # Cache scaled background
+        self.bg_scaled_surf = None
+        self.bg_frame_count = 0
         try:
             self.bg_cap = cv2.VideoCapture(self.bg_path)
             if not self.bg_cap.isOpened():
@@ -338,7 +346,9 @@ class StealthGame:
                 ret, frame = self.bg_cap.read()
                 if ret:
                     frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    self.bg_frame_surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+                    surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
+                    self.bg_frame_surf = surf.convert()
+                    self.bg_scaled_surf = pygame.transform.scale(surf, (WIDTH, HEIGHT)).convert()
         except Exception:
             self.bg_cap = None
             self.bg_frame_surf = None
@@ -351,6 +361,12 @@ class StealthGame:
         """
         if not self.bg_cap:
             return
+
+        # Skep frames
+        self.bg_frame_count += 1
+        if self.bg_frame_count % 2 != 0:
+            return
+        
         ret, frame = self.bg_cap.read()
         if not ret:
             self.bg_cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
@@ -361,9 +377,9 @@ class StealthGame:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         try:
             surf = pygame.surfarray.make_surface(frame.swapaxes(0, 1))
-            self.bg_frame_surf = surf
+            self.bg_frame_surf = surf.convert()
             # Pre-scale background to avoid scaling every frame
-            self.bg_scaled_surf = pygame.transform.scale(surf, (WIDTH, HEIGHT))
+            self.bg_scaled_surf = pygame.transform.scale(surf, (WIDTH, HEIGHT)).convert()
         except Exception:
             pass
 
@@ -1097,10 +1113,8 @@ class StealthGame:
         pygame.display.flip()
     
     def draw_menu(self):
-        """
-        Draw the main menu.
-        """
-        title = self.get_cached_text("Terminal Infiltration", self.title_font, GREEN)
+        """Draw the main menu."""
+        title = self.get_static_text("Terminal Infiltration", self.title_font, GREEN)
         title_rect = title.get_rect(center=(WIDTH//2, 150))
         self.screen.blit(title, title_rect)
 
@@ -1112,8 +1126,8 @@ class StealthGame:
         ]
 
         y = 250
-        for line in instructions:
-            text = self.font.render(line, True, WHITE)
+        for i, line in enumerate(instructions):
+            text = self.get_static_text(f"menu_inst_{i}", line, self.font, WHITE)
             text_rect = text.get_rect(center=(WIDTH//2, y))
             self.screen.blit(text, text_rect)
             y += 40
@@ -1137,11 +1151,9 @@ class StealthGame:
             self.settings_menu.draw(self.screen, self.font)
 
     def draw_game(self):
-        """
-        Draw the main game UI.
-        """
+        """Draw the main game UI."""
         # Draw title
-        title = self.get_cached_text("SECURITY TERMINAL", self.title_font, GREEN)
+        title = self.get_static_text("SECURITY TERMINAL", self.title_font, GREEN)
         self.screen.blit(title, (WIDTH//2 - title.get_width()//2, 20))
 
         # Draw status bars
@@ -1187,9 +1199,415 @@ class StealthGame:
             guard.draw(self.screen, 100, monitor_y + i * 60, 800, 40)
 
         # System statuses
+        status_y = 350
+        systems = [
+            ("CAMERAS", "OFFLINE" if self.camera_disabled else "ONLINE", 
+             GREEN if self.camera_disabled else RED, self.camera_blink_active),
+            ("LIGHTS", "OFFLINE" if self.lights_disabled else "ONLINE", GREEN if self.lights_disabled else RED)
+        ]
+
+        # Draw system statuses
+        for i, sys_data in enumerate(systems):
+            if len(sys_data) < 3:
+                continue  # Skip malformed system data
+            name = sys_data[0]
+            status = sys_data[1]
+            color = sys_data[2]
+            blink = sys_data[3] if len(sys_data) > 3 else False
+            if blink and int(self.ui_time * 10) % 2 == 0:
+                color = YELLOW
+            text = self.small_font.render(f"{name}: {status}", True, color)
+            self.screen.blit(text, (100 + i * 250, status_y))
+        
+        # Show current event
+        if self.current_event:
+            ev_text = self.current_event['text'] if isinstance(self.current_event, dict) else str(self.current_event)
+            event_text = self.small_font.render(f"! {ev_text}", True, YELLOW)
+            self.screen.blit(event_text, (WIDTH//2 - event_text.get_width()//2, 390))
+        
+        # Draw action buttons
+        for key in ['camera', 'lights', 'distract', 'hack']:
+            show_tooltip = self.buttons[key].is_hovered()
+            self.buttons[key].draw(self.screen, self.small_font, show_tooltip)
+        
+        # Draw button hints
+        hints = [
+            ("[1] Camera", self.buttons['camera'].rect.centerx),
+            ("[2] Lights", self.buttons['lights'].rect.centerx),
+            ("[3] Distract", self.buttons['distract'].rect.centerx),
+            ("[4] Hack", self.buttons['hack'].rect.centerx),
+        ]
+        hint_y = self.buttons['hack'].rect.bottom + 10
+        for hint_text, hint_x in hints:
+            hint = self.small_font.render(hint_text, True, (150, 150, 150))
+            hint_rect = hint.get_rect(center=(hint_x, hint_y))
+            self.screen.blit(hint, hint_rect)
+        
+        esc_hint = self.small_font.render("[ESC] Pause", True, (150, 150, 150))
+        self.screen.blit(esc_hint, (WIDTH - esc_hint.get_width() - 10, 65))
+
+        # Draw upgrade shop
+        self.draw_upgrade_menu()
+        
+        # Draw secondary objectives
+        current_time = time.time()
+        for so in self.secondary_objectives:
+            if not so['active']:
+                continue
+            # Make objectives more visible with pulsing effect
+            pulse = abs(math.sin(current_time * 3)) * 0.3 + 0.7
+            radius = int(20 * pulse)
+            # Draw outer glow
+            pygame.draw.circle(self.screen, (255, 255, 0, 100), (so['x'], so['y']), radius + 5)
+            # Draw main circle
+            pygame.draw.circle(self.screen, YELLOW, (so['x'], so['y']), radius)
+            # Draw border
+            pygame.draw.circle(self.screen, WHITE, (so['x'], so['y']), radius, 2)
+            # Draw text
+            txt = self.font.render(f"+{so['reward']}", True, BLACK)
+            self.screen.blit(txt, (so['x'] - txt.get_width()//2, so['y'] - txt.get_height()//2))
+
+        # Draw toasts
+        self.draw_toasts()
+
+        # Draw settings and quit buttons during gameplay
+        self.buttons['settings'].draw(self.screen, self.font)
+        self.buttons['pause_game'].draw(self.screen, self.font)
+        
+        if self.settings_menu:
+            self.settings_menu.draw(self.screen, self.font)
+
+    def draw_status_bars(self, x, y, width, height, label, value, max_value, color, icon=None):
+        """Draw a status bar with label, value, and icon."""
+        label_text = self.small_font.render(label, True, WHITE)
+        self.screen.blit(label_text, (x, y - 25))
+
+        pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
+
+        if max_value > 0:
+            fill_width = int((value / max_value) * width)
+            fill_width = max(0, min(fill_width, width))
+        
+            # pulsing effect for detection bar when high
+            draw_color = color
+            if label == "DETECTION":
+                ratio = value / max_value if max_value > 0 else 0
+                if ratio >= 0.6:
+                    period = 0.6
+                    pulse = 0.5 * (1.0 + math.sin(2 * math.pi * (self.ui_time / period)))
+                    amp = 0.45
+                    draw_color = tuple(
+                        min(255, int(c + (255 - c) * pulse * amp))
+                        for c in color
+                    )
+            elif label == "TIME":
+                ratio = value / max_value if max_value > 0 else 0
+                if ratio <= 0.3:
+                    period = 0.6
+                    pulse = 0.5 * (1.0 + math.sin(2 * math.pi * (self.ui_time / period)))
+                    amp = 0.45
+                    target = (255, 200, 40)
+                    draw_color = tuple(
+                        min(255, int(c + (t - c) * pulse * amp))
+                        for c, t in zip(color, target)
+                    )
+            pygame.draw.rect(self.screen, draw_color, (x, y, fill_width, height))
+
+        # Border
+        pygame.draw.rect(self.screen, WHITE, (x, y, width, height), 2)
+
+        # Icon
+        if icon:
+            icon_x = x + 5
+            icon_y = y + height//2 - icon.get_height()//2
+            self.screen.blit(icon, (icon_x, icon_y))
+
+        if label == 'TIME':
+            value_text = self.small_font.render(f"{int(value)}s", True, WHITE)
+        else:
+            value_text = self.small_font.render(f"{int(value)}%", True, WHITE)
+        
+        text_rect = value_text.get_rect(center=(x + width//2, y + height//2))
+        self.screen.blit(value_text, text_rect)
+
+    def draw_mission_progress(self, x, y, width, height):
+        """Draw the mission progress bar."""
+        # Label
+        label = self.get_cached_text("MISSION", self.small_font, WHITE)
+        self.screen.blit(label, (x, y - 25))
+
+        # Progress
+        progress = self.animated_objectives / self.objectives_needed if self.objectives_needed > 0 else 0
+
+        # Background
+        pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
+
+        # Fill
+        fill_width = int(progress * width)
+        gradient_color = (
+            int(255 * (1 - progress) + 0 * progress),
+            int(0 * (1 - progress) + 255 * progress),
+            0
+        )
+        pygame.draw.rect(self.screen, gradient_color, (x, y, fill_width, height))
+
+        # Border
+        pygame.draw.rect(self.screen, WHITE, (x, y, width, height), 2)
+
+        # Icon
+        icon = self.icons['target']
+        icon_x = x + 5
+        icon_y = y + height//2 - icon.get_height()//2
+        self.screen.blit(icon, (icon_x, icon_y))
+
+        # Percentage
+        actual_progress = self.objective_progress / self.objectives_needed if self.objectives_needed > 0 else 0
+        percentage = round(actual_progress * 100)
+        progress_text = self.font.render(f"{percentage}%", True, WHITE)
+        text_rect = progress_text.get_rect(center=(x + width//2, y + height//2))
+        self.screen.blit(progress_text, text_rect)
+
+    def draw_toasts(self):
+        """Draw toast notifications."""
+        toast_x = WIDTH // 2
+        toast_y = HEIGHT - 100
+
+        for i, toast in enumerate(self.toasts):
+            target_y = toast_y - i * 40
+
+            text_surf = self.font.render(toast['text'], True, toast['color'])
+            text_surf.set_alpha(toast.get('alpha', 255))
+
+            padding = 10
+            bg_rect = pygame.Rect(
+                toast_x - text_surf.get_width() // 2 - padding,
+                target_y - padding,
+                text_surf.get_width() + 2 * padding,
+                text_surf.get_height() + 2 * padding
+            )
+
+            bg_surf = pygame.Surface((bg_rect.width, bg_rect.height), pygame.SRCALPHA)
+            bg_surf.fill((0, 0, 0, 180))
+            self.screen.blit(bg_surf, bg_rect.topleft)
+            pygame.draw.rect(self.screen, toast['color'], bg_rect, 2, border_radius=5)
+
+            text_rect = text_surf.get_rect(center=(toast_x, target_y + text_surf.get_height() // 2))
+            self.screen.blit(text_surf, text_rect)
+
+    def draw_end_screen(self, message, color):
+        """Draw the end screen (success or failure)."""
+        text = self.title_font.render(message, True, color)
+        text_rect = text.get_rect(center=(WIDTH//2, HEIGHT//2 - 100))
+        self.screen.blit(text, text_rect)
+
+        stats = [
+            f"Objectives Completed: {self.animated_end_objectives}/{self.objectives_needed}",
+            f"Final Detection: {self.animated_end_detection}%",
+            f"Time Remaining: {int(self.animated_end_time)}s"
+        ]
+
+        y = HEIGHT//2
+        for stat in stats:
+            stat_text = self.font.render(stat, True, WHITE)
+            stat_rect = stat_text.get_rect(center=(WIDTH//2, y))
+            self.screen.blit(stat_text, stat_rect)
+            y += 40
+        
+        self.buttons['menu'].text = "RETURN TO MENU"
+        self.buttons['menu'].draw(self.screen, self.font)
+        
+        self.buttons['exit'].rect.y = self.buttons['menu'].rect.y + 70
+        self.buttons['exit'].draw(self.screen, self.font)
+
+    def draw_upgrade_menu(self):
+        """Draw the upgrade/perks shop menu."""
+        if not self.upgrade_menu_open:
+            return
+    
+        if not hasattr(self, '_base_costs'):
+            self._base_costs = {'cooldown_reduction': 5, 'camera_disable_bonus': 8, 'detection_resistance': 12}
+            
+        # Background overlay
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 180))
+        self.screen.blit(overlay, (0, 0))
+        
+        # Shop panel
+        panel_width, panel_height = 500, 400
+        panel_x = (WIDTH - panel_width) // 2
+        panel_y = (HEIGHT - panel_height) // 2
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        
+        pygame.draw.rect(self.screen, (40, 40, 60), panel_rect, border_radius=10)
+        pygame.draw.rect(self.screen, (120, 120, 120), panel_rect, 3, border_radius=10)
+        
+        # Title
+        title = self.title_font.render("UPGRADE SHOP", True, GREEN)
+        title_rect = title.get_rect(center=(panel_x + panel_width//2, panel_y + 30))
+        self.screen.blit(title, title_rect)
+        
+        # Currency display
+        currency_text = self.font.render(f"Credits: {self.currency}", True, YELLOW)
+        self.screen.blit(currency_text, (panel_x + 20, panel_y + 60))
+        
+        # Upgrade options
+        upgrade_y = panel_y + 100
+
+        if not hasattr(self, 'upgrade_purchase_count'):
+            self.upgrade_purchase_count = {'cooldown_reduction': 0, 'camera_disable_bonus': 0, 'detection_resistance': 0}
+        
+        upgrades = [
+            {
+                'name': 'Faster Cooldowns',
+                'description': 'Reduce all cooldowns by 20%',
+                'cost': int(self._base_costs['cooldown_reduction'] * (4 ** self.upgrade_purchase_count['cooldown_reduction'])),
+                'key': 'cooldown_reduction',
+                'current': f"{int(self.perks.get('cooldown_reduction', 0) * 100)}%"
+            },
+            {
+                'name': 'Extended Camera Disable',
+                'description': 'Camera disable lasts 3s longer',
+                'cost': int(self._base_costs['camera_disable_bonus'] * (4 ** self.upgrade_purchase_count['camera_disable_bonus'])),
+                'key': 'camera_disable_bonus',
+                'current': f"+{int(self.perks.get('camera_disable_bonus', 0))}s"
+            },
+            {
+                'name': 'Detection Shield',
+                'description': 'Reduce detection gain by 15%',
+                'cost': int(self._base_costs['detection_resistance'] * (4 ** self.upgrade_purchase_count['detection_resistance'])),
+                'key': 'detection_resistance',
+                'current': f"{int(self.perks.get('detection_resistance', 0) * 100)}%"
+            }
+        ]
+        
+        for i, upgrade in enumerate(upgrades):
+            y_pos = upgrade_y + i * 80
+            
+            upgrade_rect = pygame.Rect(panel_x + 20, y_pos, panel_width - 40, 70)
+            color = (0, 80, 0) if self.currency >= upgrade['cost'] else (80, 40, 40)
+            pygame.draw.rect(self.screen, color, upgrade_rect, border_radius=5)
+            pygame.draw.rect(self.screen, WHITE, upgrade_rect, 2, border_radius=5)
+            
+            name_text = self.font.render(upgrade['name'], True, WHITE)
+            desc_text = self.small_font.render(upgrade['description'], True, (200, 200, 200))
+            cost_text = self.small_font.render(f"Cost: {upgrade['cost']} credits", True, YELLOW)
+            current_text = self.small_font.render(f"Current: {upgrade['current']}", True, GREEN)
+            
+            self.screen.blit(name_text, (upgrade_rect.x + 10, upgrade_rect.y + 5))
+            self.screen.blit(desc_text, (upgrade_rect.x + 10, upgrade_rect.y + 25))
+            self.screen.blit(cost_text, (upgrade_rect.x + 10, upgrade_rect.y + 45))
+            self.screen.blit(current_text, (upgrade_rect.x + 200, upgrade_rect.y + 45))
+            
+            key_text = self.font.render(f"[{i+1}]", True, WHITE)
+            self.screen.blit(key_text, (upgrade_rect.right - 40, upgrade_rect.y + 20))
+        
+        instructions = [
+            "Press 1-3 to purchase upgrades",
+            "Press ESC or click Upgrades again to close"
+        ]
+        
+        inst_y = panel_y + panel_height - 50
+        for instruction in instructions:
+            inst_text = self.small_font.render(instruction, True, (180, 180, 180))
+            inst_rect = inst_text.get_rect(center=(panel_x + panel_width//2, inst_y))
+            self.screen.blit(inst_text, inst_rect)
+            inst_y += 20
+    
+    def draw_reset_confirmation(self):
+        """Draw the reset confirmation dialog."""
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        overlay.fill((0, 0, 0, 200))
+        self.screen.blit(overlay, (0, 0))
+
+        dialog_width, dialog_height = 500, 300
+        dialog_x = (WIDTH - dialog_width) // 2
+        dialog_y = (HEIGHT - dialog_height) // 2
+        dialog_rect = pygame.Rect(dialog_x, dialog_y, dialog_width, dialog_height)
+
+        pygame.draw.rect(self.screen, (60, 20, 20), dialog_rect, border_radius=10)
+        pygame.draw.rect(self.screen, RED, dialog_rect, 3, border_radius=10)
+
+        title = self.title_font.render("! WARNING !", True, RED)
+        title_rect = title.get_rect(center=(dialog_x + dialog_width//2, dialog_y + 40))
+        self.screen.blit(title, title_rect)
+
+        messages = [
+            "This will permanently reset ALL progress:",
+            "• All credits and currency",
+            "• All purchased upgrades and perks",
+            "• All best scores and achievements",
+            "",
+            "This action CANNOT be undone."
+        ]
+
+        y = dialog_y + 80
+        for msg in messages:
+            text = self.small_font.render(msg, True, WHITE if msg.startswith("•") or msg == "" else YELLOW)
+            text_rect = text.get_rect(center=(dialog_x + dialog_width//2, y))
+            self.screen.blit(text, text_rect)
+            y += 25
+        
+        self.reset_yes_btn.draw(self.screen, self.font)
+        self.reset_no_btn.draw(self.screen, self.font)
+    
+    def draw_pause_menu(self):
+        """Draw the pause menu overlay."""
+        if not self.show_pause_menu:
+            return
+
+        if not hasattr(self, '_pause_overlay_cached') or self._pause_overlay_cached is None:
+            self._create_pause_overlay()
+        
+        self.screen.blit(self._pause_overlay, (0, 0))
+
+        pause_text = self.title_font.render("PAUSED", True, YELLOW)
+        pause_rect = pause_text.get_rect(center=(WIDTH//2, HEIGHT//2 - 100))
+        self.screen.blit(pause_text, pause_rect)
+
+        self.pause_resume_btn.draw(self.screen, self.font)
+        self.pause_menu_btn.draw(self.screen, self.font)
+    
+    def _create_pause_overlay(self):
+        """Create and cache the pause menu overlay."""
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+
+        title_size = 40
+        for y in range(0, HEIGHT, title_size):
+            for x in range(0, WIDTH, title_size):
+                if (x // title_size + y // title_size) % 2 == 0:
+                    alpha = 120
+                else:
+                    alpha = 100
+                pygame.draw.rect(overlay, (0, 0, 0, alpha), (x, y, title_size, title_size))
+        
+        fade_overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+        fade_overlay.fill((0, 0, 0, 180))
+        overlay.blit(fade_overlay, (0, 0))
+
+        self._pause_overlay = overlay
+        self._pause_overlay_cached = True
+
+    def run(self):
+        """Run the main game loop."""
+        while self.running:
+            dt = self.clock.tick(FPS) / 1000.0
+
+            self.update_background(dt)
+
+            self.handle_events()
+            self.update(dt)
+            self.draw()
+        
+        self.transition_manager.clear()
+        
+        if self.bg_cap:
+            try:
+                self.bg_cap.release()
+            except Exception:
+                pass
         
         pygame.quit()
-
+    
 if __name__ == "__main__":
     game = StealthGame()
     game.run()
