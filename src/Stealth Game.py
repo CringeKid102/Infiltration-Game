@@ -417,7 +417,7 @@ class StealthGame:
             'settings': Button(WIDTH - 240, 20, 120, 40, "SETTINGS", DARK_GRAY, GRAY),
             'upgrades': Button(WIDTH - 380, 20, 120, 40, "UPGRADES", DARK_GRAY, GRAY),
             'reset': Button(WIDTH - 100, 20, 80, 40, "RESET", RED, DARK_GRAY),
-            'pause_game': Button(WIDTH - 110, 20, 100, 40, "QUIT", RED, (255, 100, 100)),
+            'pause_game': Button(WIDTH - 100, 20, 80, 40, "QUIT", RED, (255, 100, 100)),
             'difficulty': Button(WIDTH//2 - 100, HEIGHT//2 + 240, 200, 50, f"Difficulty: {self.difficulty_display_names[self.current_difficulty_index]}", DARK_GRAY, GRAY)
         }
 
@@ -462,19 +462,19 @@ class StealthGame:
         pygame.draw.rect(self.screen, RED, panel_rect, 3, border_radius=10)
         
         # Warning text
-        warning_text = self.font.render("WARNING!", True, RED)
+        warning_text = self.get_static_text("quit_warning", "WARNING!", self.font, RED)
         warning_rect = warning_text.get_rect(center=(panel_x + panel_width//2, panel_y + 40))
         self.screen.blit(warning_text, warning_rect)
         
         # Message
-        msg1 = self.small_font.render("If you quit now, you will lose", True, WHITE)
+        msg1 = self.get_static_text("quit_msg1", "If you quit now, you will lose", self.small_font, WHITE)
         pending = getattr(self, 'pending_credits', 0)
         if pending > 0:
-            msg2 = self.small_font.render(f"{pending} pending credits!", True, YELLOW)
+            msg2 = self.get_static_text("quit_msg2", f"{pending} pending credits!", self.small_font, YELLOW)
         else:
-            msg2 = self.small_font.render("No credits will be lost.", True, GREEN)
-        msg3 = self.small_font.render("Are you sure?", True, WHITE)
-        
+            msg2 = self.get_static_text("quit_msg2", "No credits will be lost.", self.small_font, GREEN)
+        msg3 = self.get_static_text("quit_msg3", "Are you sure?", self.small_font, WHITE)
+
         msg1_rect = msg1.get_rect(center=(panel_x + panel_width//2, panel_y + 80))
         msg2_rect = msg2.get_rect(center=(panel_x + panel_width//2, panel_y + 100))
         msg3_rect = msg3.get_rect(center=(panel_x + panel_width//2, panel_y + 120))
@@ -1229,7 +1229,7 @@ class StealthGame:
             blink = sys_data[3] if len(sys_data) > 3 else False
             if blink and int(self.ui_time * 10) % 2 == 0:
                 color = YELLOW
-            text = self.small_font.render(f"{name}: {status}", True, color)
+            text = self.get_cached_text(f"{name}: {status}", self.small_font, color)
             self.screen.blit(text, (100 + i * 250, status_y))
         
         # Show current event
@@ -1253,11 +1253,11 @@ class StealthGame:
         ]
         hint_y = self.buttons['hack'].rect.bottom + 10
         for hint_text, hint_x in hints:
-            hint = self.small_font.render(hint_text, True, (150, 150, 150))
+            hint = self.get_static_text(f"hint_{hint_text}", hint_text, self.small_font, (150, 150, 150))
             hint_rect = hint.get_rect(center=(hint_x, hint_y))
             self.screen.blit(hint, hint_rect)
-        
-        esc_hint = self.small_font.render("[ESC] Pause", True, (150, 150, 150))
+
+        esc_hint = self.get_static_text("esc_hint", "[ESC] Pause", self.small_font, (150, 150, 150))
         self.screen.blit(esc_hint, (WIDTH - esc_hint.get_width() - 10, 65))
 
         # Draw upgrade shop
@@ -1293,7 +1293,7 @@ class StealthGame:
 
     def draw_status_bars(self, x, y, width, height, label, value, max_value, color, icon=None):
         """Draw a status bar with label, value, and icon."""
-        label_text = self.small_font.render(label, True, WHITE)
+        label_text = self.get_static_text(f"bar_label_{label}", label, self.small_font, WHITE)
         self.screen.blit(label_text, (x, y - 25))
 
         pygame.draw.rect(self.screen, DARK_GRAY, (x, y, width, height))
@@ -1337,10 +1337,10 @@ class StealthGame:
             self.screen.blit(icon, (icon_x, icon_y))
 
         if label == 'TIME':
-            value_text = self.small_font.render(f"{int(value)}s", True, WHITE)
+            value_text = self.get_cached_text(f"{int(value)}s", self.small_font, WHITE)
         else:
-            value_text = self.small_font.render(f"{int(value)}%", True, WHITE)
-        
+            value_text = self.get_cached_text(f"{int(value)}%", self.small_font, WHITE)
+
         text_rect = value_text.get_rect(center=(x + width//2, y + height//2))
         self.screen.blit(value_text, text_rect)
 
