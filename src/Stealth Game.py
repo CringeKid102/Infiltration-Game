@@ -144,13 +144,6 @@ class StealthGame:
         self.pause_resume_btn = Button(WIDTH//2 - 100, HEIGHT//2 - 20, 200, 50, "RESUME", GREEN, DARK_GREEN)
         self.pause_menu_btn = Button(WIDTH//2 - 100, HEIGHT//2 + 50, 200, 50, "RETURN TO MENU", BLUE, DARK_BLUE)
 
-        # Hack charge state
-        self.hack_charging = False
-        self.hack_charge_time = 0.0
-        self.hack_charge_target = 3.0
-        self.hack_min_time = 0.4
-        self.hack_release_penalty = 0.0
-
         # System states
         self.camera_disabled = False
         self.camera_disable_time = 0
@@ -410,7 +403,7 @@ class StealthGame:
                              tooltip="Create a distraction to lure guards away\nReduces detection by 20%\nCooldown: 8s",
                              icon=self.icons['distract'], hotkey="3"),
             'hack': Button(start_x + 3 * spacing, button_y, button_width, button_height, "Hack System", DARK_GREEN, GREEN,
-                           tooltip="Hack into the security system\nReduces detection by 25%\nCooldown: 10s",
+                           tooltip="Hack into the security system\nGain objective progress\nRisk vs Reward\nCooldown: 3-5s",
                            icon=self.icons['hack'], hotkey="4"),
             'menu': Button(WIDTH//2 - 100, HEIGHT//2 + 100, 200, 50, "START MISSION", DARK_GREEN, GREEN),
             'exit': Button(WIDTH//2 - 100, HEIGHT//2 + 170, 200, 50, "EXIT", RED, (255, 100, 100)),
@@ -470,10 +463,10 @@ class StealthGame:
         msg1 = self.get_static_text("quit_msg1", "If you quit now, you will lose", self.small_font, WHITE)
         pending = getattr(self, 'pending_credits', 0)
         if pending > 0:
-            msg2 = self.get_static_text("quit_msg2", f"{pending} pending credits!", self.small_font, YELLOW)
+            msg2 = self.small_font.render(f"{pending} pending credits!", True, YELLOW)
         else:
-            msg2 = self.get_static_text("quit_msg2", "No credits will be lost.", self.small_font, GREEN)
-        msg3 = self.get_static_text("quit_msg3", "Are you sure?", self.small_font, WHITE)
+            msg2 = self.small_font.render("No credits will be lost.", True, GREEN)
+        msg3 = self.small_font.render("Are you sure?", True, WHITE)
 
         msg1_rect = msg1.get_rect(center=(panel_x + panel_width//2, panel_y + 80))
         msg2_rect = msg2.get_rect(center=(panel_x + panel_width//2, panel_y + 100))
@@ -696,38 +689,6 @@ class StealthGame:
                         )
                     elif self.buttons['exit'].is_clicked(pos):
                         self.running = False
-            
-            # Handle hack button charging
-            elif event.type == pygame.MOUSEBUTTONUP:
-                if self.hack_charging:
-                    self.hack_charging = False
-                    charge = max(self.hack_min_time, min(self.hack_charge_time, self.hack_charge_target))
-                    progress_gain = int(1 + (charge / self.hack_charge_target) * 3)
-                    detection_increase = int(5 + (charge / self.hack_charge_target) * 30)
-                    base_success = max(0.2, 0.9 - (self.detection_level / 120.0))
-                    success_modifier = (charge / self.hack_charge_target) * 0.15
-                    success_chance = min(0.98, base_success + success_modifier)
-                    
-                    if random.random() <= success_chance:
-                        self.objective_progress += progress_gain
-                        self.detection_level = max(0, self.detection_level + (detection_increase * 0.2))
-                        self.add_toast(f"HACK SUCCESS +{progress_gain}", GREEN, 2.5)
-                        # Set cooldown based on success (shorter cooldown for success)
-                        cooldown_time = 3.0 - self.perks.get('cooldown_reduction', 0.0)
-                        self.buttons['hack'].set_cooldown(max(1.0, cooldown_time))
-                        if self.audio_manager:
-                            self.audio_manager.play_sfx('hack_success')
-                    else:
-                        # fail (bigger penalty)
-                        self.detection_level = min(self.max_detection, self.detection_level + detection_increase)
-                        self.add_toast(f"HACK FAILED +{detection_increase}%", RED, 2.5)
-                        # Longer cooldown for failure
-                        cooldown_time = 5.0 - self.perks.get('cooldown_reduction', 0.0)
-                        self.buttons['hack'].set_cooldown(max(2.0, cooldown_time))
-                        if self.audio_manager:
-                            self.audio_manager.play_sfx('hack_fail')
-                    
-                    self.audio_manager.unduck_music()
 
     def _handle_keyboard(self, key):
         """
@@ -859,13 +820,31 @@ class StealthGame:
             # Check if hack button is on cooldown
             if self.buttons['hack'].cooldown > 0:
                 return
-               
-            # Start hack charge (hold to charge in update loop)
+            
             self.buttons['hack'].press()
-            self.hack_charging = True
-            self.hack_charge_time = 0.0
-            self.audio_manager.duck_music(0.3)
             self.audio_manager.play_sfx("system_startup")
+               
+            # Instant hack with risk/reward
+            progress_gain = 2
+            detection_increase = 15
+            base_success = max(0.4, 0.85 - (self.detection_level / 120.0))
+            success_chance = base_success
+            
+            if random.random() <= success_chance:
+                self.objective_progress += progress_gain
+                self.detection_level = max(0, self.detection_level + (detection_increase * 0.3))
+                self.add_toast(f"HACK SUCCESS +{progress_gain}", GREEN, 2.5)
+                cooldown_time = 3.0 - self.perks.get('cooldown_reduction', 0.0)
+                self.buttons['hack'].set_cooldown(max(1.0, cooldown_time))
+                if self.audio_manager:
+                    self.audio_manager.play_sfx('hack_success')
+            else:
+                self.detection_level = min(self.max_detection, self.detection_level + detection_increase)
+                self.add_toast(f"HACK FAILED +{detection_increase}%", RED, 2.5)
+                cooldown_time = 5.0 - self.perks.get('cooldown_reduction', 0.0)
+                self.buttons['hack'].set_cooldown(max(2.0, cooldown_time))
+                if self.audio_manager:
+                    self.audio_manager.play_sfx('hack_fail')
             
     def update(self, dt):
         """
@@ -895,12 +874,6 @@ class StealthGame:
         self.time_remaining -= dt
         self.ui_time += dt
         
-        # Update hack charging timer
-        if getattr(self, "hack_charging", False):
-            self.hack_charge_time += dt
-            if self.hack_charge_time > self.hack_charge_target:
-                self.hack_charge_time = self.hack_charge_target
-        
         # Optimize secondary objective generation - reduce calls to heavy functions
         if random.random() < 0.02:  # Only check if playing state
             if not hasattr(self, '_obj_counter'):
@@ -925,9 +898,9 @@ class StealthGame:
 
         # Smooth interpolation for animated values (cached function)
         interp_factor = min(1.0, dt * 4.0)
-        self.animated_time = self.animated_time + (self.time_remaining - self.animated_time) * interp_factor
-        self.animated_detection = self.animated_detection + (self.detection_level - self.animated_detection) * interp_factor
-        self.animated_objectives = self.animated_objectives + (self.objective_progress - self.animated_objectives) * interp_factor
+        self.animated_time += (self.time_remaining - self.animated_time) * interp_factor
+        self.animated_detection += (self.detection_level - self.animated_detection) * interp_factor
+        self.animated_objectives += (self.objective_progress - self.animated_objectives) * interp_factor
 
         # Camera blink animation
         if self.camera_blink_time > 0:
@@ -935,9 +908,9 @@ class StealthGame:
             if self.camera_blink_time <= 0:
                 self.camera_blink_active = False
 
-        for button in self.buttons.values():
-            button.update(dt)
-        
+        for key in ['camera', 'lights', 'distract', 'hack']:
+            self.buttons[key].update(dt)
+                
         if self.camera_disable_time > 0:
             self.camera_disable_time -= dt
             if self.camera_disable_time <= 0:
@@ -965,20 +938,17 @@ class StealthGame:
         # Guards can spot player in danger zone
         danger_zone_start = 0.4
         danger_zone_end = 0.6
-        detection_multiplier_lights = 2 if not self.lights_disabled else 1
-        detection_multiplier_camera = 1.5 if not self.camera_disabled else 1
+        total_detection_multiplier = (2 if not self.lights_disabled else 1) * (1.5 if not self.camera_disabled else 1)
+        base_detection_chance = 0.02 * total_detection_multiplier
 
-        for guard in self.guards:
+        for i, guard in enumerate(self.guards):
             if danger_zone_start < guard.position < danger_zone_end:
-                detection_chance = 0.02
-                detection_chance *= detection_multiplier_lights * detection_multiplier_camera
-                                
-                if random.random() < detection_chance:
+                if random.random() < base_detection_chance:
                     guard.alert = True
                     delta = 5
                     self.detection_level += delta
                     gx = 100 + int(guard.position * 800)
-                    gy = 150 + (self.guards.index(guard) * 60) + 20
+                    gy = 150 + (i * 60) + 20
                     self.particle_sys.spawn_sparks(gx, gy, count=6, color=(255,180,80))
                     self.particle_sys.add_detection_popup(+delta, gx, gy)
         
@@ -1264,7 +1234,11 @@ class StealthGame:
         self.draw_upgrade_menu()
         
         # Draw secondary objectives
-        current_time = time.time()
+        if not hasattr(self, '_last_pulse_time'):
+            self._last_pulse_time = time.time()
+        if random.random() < 0.1:
+            self._last_pulse_time = time.time()
+        current_time = self._last_pulse_time
         for so in self.secondary_objectives:
             if not so['active']:
                 continue
@@ -1278,7 +1252,7 @@ class StealthGame:
             # Draw border
             pygame.draw.circle(self.screen, WHITE, (so['x'], so['y']), radius, 2)
             # Draw text
-            txt = self.font.render(f"+{so['reward']}", True, BLACK)
+            txt = self.get_cached_text(f"+{so['reward']}", self.font, BLACK)
             self.screen.blit(txt, (so['x'] - txt.get_width()//2, so['y'] - txt.get_height()//2))
 
         # Draw toasts
