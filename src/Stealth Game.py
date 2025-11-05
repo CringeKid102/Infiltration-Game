@@ -1599,3 +1599,4 @@ class StealthGame:
 if __name__ == "__main__":
     game = StealthGame()
     game.run()
+
